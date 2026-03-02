@@ -72,6 +72,8 @@ This file is auto-generated - DO NOT EDIT MANUALLY
     for name, value in sorted_types:
         python_content += f"    '{name}': {value},\n"
     python_content += "}\n\n"
+    python_content += "# Reverse map: integer type id → name string\n"
+    python_content += "TLV_NAMES = {v: k for k, v in TLV_TYPES.items()}\n"
     
     # Write to file
     with open(output_path, 'w') as f:
@@ -83,24 +85,27 @@ def main():
     script_dir = Path(__file__).parent
     json_file = script_dir / "TLV_TypeDefs.json"
     header_file = script_dir / ".." / "firmware" / "arduino" / "src" / "messages" / "TLV_TypeDefs.h"
-    # python_file = script_dir / ".." / "ros2_ws" / "src" / "TLV_TypeDefs.py"
-    python_file = script_dir / ".." / "nuevo_ui" / "backend"  / "nuevo_bridge" / "TLV_TypeDefs.py"
-    
+    python_files = [
+        script_dir / ".." / "ros2_ws" / "src" / "TLV_TypeDefs.py",
+        script_dir / ".." / "nuevo_ui" / "backend" / "nuevo_bridge" / "TLV_TypeDefs.py",
+    ]
+
     # Read JSON file
     if not json_file.exists():
         print(f"Error: {json_file} not found", file=sys.stderr)
         sys.exit(1)
-    
+
     with open(json_file, 'r') as f:
         data = json.load(f)
-    
+
     # Generate C++ header
     generate_c_header(data, header_file)
-    
-    # Generate Python module
-    python_file.parent.mkdir(parents=True, exist_ok=True)
-    generate_python_module(data, python_file)
-    
+
+    # Generate Python modules
+    for python_file in python_files:
+        python_file.parent.mkdir(parents=True, exist_ok=True)
+        generate_python_module(data, python_file)
+
     print("Successfully generated TLV type definition files")
 
 if __name__ == "__main__":
