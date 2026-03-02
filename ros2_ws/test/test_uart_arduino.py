@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 """
-test_uart_arduino.py - UART TLV v2.0 Communication Test
+test_uart_arduino.py - UART TLV v2.0 Baud-Rate Validation Test
 
-Pairs with firmware/tests/test_uart_tlv/test_uart_tlv.ino running on the Arduino.
+Primary goal: find the highest reliable baud rate for the Arduino ↔ RPi link.
 
 Usage:
     python3 test_uart_arduino.py [--port /dev/ttyAMA0] [--baud 1000000]
 
-Hardware setup:
-    - Arduino Serial2 (pin 16 TX2, pin 17 RX2) → level shifter → RPi /dev/ttyAMA0
-    - Arduino Serial0 (USB) shows debug output; use a second terminal to monitor it
-    - Alternatively: connect pin 16 → 17 for loopback (Arduino receives own TX)
+Suggested sweep (run once at each rate, read the quality report):
+    python3 test_uart_arduino.py --baud 115200
+    python3 test_uart_arduino.py --baud 230400
+    python3 test_uart_arduino.py --baud 500000
+    python3 test_uart_arduino.py --baud 1000000
+    python3 test_uart_arduino.py --baud 2000000
 
-State machine commands sent by this script:
-    start  → SYS_CMD_START  (IDLE → RUNNING, enables full telemetry)
-    stop   → SYS_CMD_STOP   (RUNNING → IDLE)
-    estop  → SYS_CMD_ESTOP  (any → ESTOP)
-    reset  → SYS_CMD_RESET  (ESTOP/ERROR → IDLE)
+Quality metrics tracked:
+  Arduino → RPi:  decode_errors / total_frames  (CRC/framing failures in received data)
+  RPi → Arduino:  uartRxErrors field in SYS_STATUS (CRC failures seen by the firmware)
+  Link quality:   EXCELLENT <0.1% | GOOD <1% | MARGINAL <5% | FAIL ≥5%
+
+Stats auto-print every 5 s. Press 's' + Enter for immediate report.
+
+Hardware:
+    Arduino Serial2 (pin 16 TX, pin 17 RX) → level shifter → RPi /dev/ttyAMA0
+    Arduino USB Serial0 shows Arduino-side debug (open in a second terminal)
 
 Requirements:
     pip3 install pyserial
@@ -48,11 +55,12 @@ from TLV_TypeDefs import *
 # CONFIGURATION
 # ============================================================================
 
-DEFAULT_PORT = '/dev/ttyAMA0'   # Raspberry Pi UART (GPIO 14/15 = Serial0)
-DEFAULT_BAUD = 1000000          # Must match RPI_BAUD_RATE in config.h (1 Mbps)
-DEVICE_ID    = 0x01             # RPi device ID
-HEARTBEAT_INTERVAL = 0.2        # Heartbeat period (seconds); Arduino timeout = 500 ms
-ENABLE_CRC   = True
+DEFAULT_PORT       = '/dev/ttyAMA0'  # RPi UART; use /dev/ttyUSB0 for USB-serial adapter
+DEFAULT_BAUD       = 1000000         # Must match RPI_BAUD_RATE in config.h
+DEVICE_ID          = 0x01
+HEARTBEAT_INTERVAL = 0.2             # seconds; Arduino liveness timeout = 500 ms
+STATS_INTERVAL     = 5.0             # auto-print quality report every N seconds
+ENABLE_CRC         = True
 
 # ============================================================================
 # PAYLOAD STRUCTS  (must match TLV_Payloads.h exactly — same field order/types)
@@ -327,15 +335,18 @@ class UARTTest:
         self.encoder  = Encoder(deviceId=DEVICE_ID, bufferSize=4096, crc=ENABLE_CRC)
         self.decoder  = Decoder(callback=self.decode_callback, crc=ENABLE_CRC)
 
-        self.running            = True
+        self.running             = True
         self.last_heartbeat_time = 0
+        self.last_stats_time     = 0
 
         self.stats = {
-            'heartbeats_sent':    0,
-            'frames_received':    0,
-            'decode_errors':      0,
+            'heartbeats_sent':       0,
+            'frames_received':       0,   # good frames (no decode error)
+            'decode_errors':         0,   # Arduino→RPi CRC/framing failures
             'decode_errors_by_type': {},
-            'by_type':            {},   # counts per TLV type name
+            'by_type':               {},  # counts per TLV type name
+            # RPi→Arduino direction — read from SYS_STATUS.uartRxErrors
+            'arduino_uart_rx_errors': 0,  # latest value from firmware
         }
 
     # ---- Connection ----
@@ -504,15 +515,19 @@ class UARTTest:
             print(f"  [SYS_STATUS] size mismatch: expected {expected}, got {tlv_len}")
             return
         s = PayloadSystemStatus.from_buffer_copy(tlv_data)
+
+        # Capture RPi→Arduino error count for quality report
+        self.stats['arduino_uart_rx_errors'] = s.uartRxErrors
+
         state_name = SYS_STATE_NAMES.get(s.state, f"?{s.state}")
         errors = [name for bit, name in ERROR_FLAGS.items() if s.errorFlags & bit]
+        rx_err_marker = f"  *** RX_ERR={s.uartRxErrors} ***" if s.uartRxErrors else ""
         print(f"  [SYS_STATUS] v{s.firmwareMajor}.{s.firmwareMinor}.{s.firmwarePatch}  "
-              f"state={state_name}  uptime={s.uptimeMs/1000:.1f}s")
-        print(f"    Batt={s.batteryMv} mV  5V={s.rail5vMv} mV  "
-              f"SRAM={s.freeSram} B  loop={s.loopTimeAvgUs}/{s.loopTimeMaxUs} µs avg/max")
+              f"state={state_name}  uptime={s.uptimeMs/1000:.1f}s  "
+              f"uartRxErr(RPi→Ard)={s.uartRxErrors}{rx_err_marker}")
         print(f"    errors={'|'.join(errors) if errors else 'none'}  "
-              f"sensors=0x{s.attachedSensors:02X}  "
-              f"lastRx={s.lastRxMs} ms ago")
+              f"lastRx={s.lastRxMs} ms ago  "
+              f"SRAM={s.freeSram} B  loop={s.loopTimeAvgUs}/{s.loopTimeMaxUs} µs")
 
     def _print_dc_status(self, tlv_len: int, tlv_data: bytes):
         expected = ctypes.sizeof(PayloadDCStatusAll)
@@ -568,22 +583,56 @@ class UARTTest:
         print(f"  [IMU/{cal}] roll={roll:.1f}°  pitch={pitch:.1f}°  yaw={yaw:.1f}°  "
               f"accZ={imu.earthAccZ:.3f}g")
 
-    # ---- Stats ----
+    # ---- Quality report ----
+
+    def _quality_label(self, error_rate_pct: float) -> str:
+        if error_rate_pct == 0.0:
+            return "EXCELLENT (0%)"
+        elif error_rate_pct < 0.1:
+            return f"EXCELLENT ({error_rate_pct:.3f}%)"
+        elif error_rate_pct < 1.0:
+            return f"GOOD      ({error_rate_pct:.2f}%)"
+        elif error_rate_pct < 5.0:
+            return f"MARGINAL  ({error_rate_pct:.1f}%)"
+        else:
+            return f"FAIL      ({error_rate_pct:.1f}%)"
 
     def print_stats(self):
-        print("\n" + "="*60)
-        print("STATISTICS:")
-        print(f"  Heartbeats sent:  {self.stats['heartbeats_sent']}")
-        print(f"  Frames received:  {self.stats['frames_received']}")
-        print(f"  Decode errors:    {self.stats['decode_errors']}")
+        good   = self.stats['frames_received']
+        errors = self.stats['decode_errors']
+        total  = good + errors
+        ard_rx = self.stats['arduino_uart_rx_errors']
+
+        # Arduino→RPi error rate (decode failures on Python side)
+        a2r_rate = (errors / total * 100) if total > 0 else 0.0
+
+        # RPi→Arduino: we only have the absolute count, estimate rate
+        r2a_rate = (ard_rx / self.stats['heartbeats_sent'] * 100) \
+                   if self.stats['heartbeats_sent'] > 0 else 0.0
+
+        print()
+        print("=" * 62)
+        print(f"  LINK QUALITY REPORT  —  {self.baudrate} baud")
+        print("=" * 62)
+        print(f"  Arduino → RPi (decode errors / frames received):")
+        print(f"    Good frames : {good}")
+        print(f"    Errors      : {errors}")
         if self.stats['decode_errors_by_type']:
             for k, v in self.stats['decode_errors_by_type'].items():
-                print(f"    {k}: {v}")
+                print(f"      {k}: {v}")
+        print(f"    Quality     : {self._quality_label(a2r_rate)}")
+        print()
+        print(f"  RPi → Arduino (uartRxErrors from SYS_STATUS):")
+        print(f"    Heartbeats sent : {self.stats['heartbeats_sent']}")
+        print(f"    RX errors (fw)  : {ard_rx}")
+        print(f"    Quality         : {self._quality_label(r2a_rate)}")
         if self.stats['by_type']:
-            print("  TLVs received by type:")
+            print()
+            print("  TLV counts received:")
             for k, v in sorted(self.stats['by_type'].items()):
                 print(f"    {k}: {v}")
-        print("="*60 + "\n")
+        print("=" * 62)
+        print()
 
     # ---- Main loop ----
 
@@ -591,35 +640,42 @@ class UARTTest:
         if not self.connect():
             return
 
-        print("\n" + "="*60)
-        print("UART TLV v2.0 Communication Test")
-        print("="*60)
-        print("Commands (press key + Enter):")
-        print("  1   - SYS_CMD_START  (IDLE → RUNNING, enables telemetry)")
+        print("\n" + "=" * 62)
+        print(f"  UART TLV Baud-Rate Validation  —  {self.baudrate} baud")
+        print("=" * 62)
+        print("Quality report auto-prints every 5 s.")
+        print("Watch for decode_errors (Ard→RPi) and uartRxErrors (RPi→Ard).")
+        print()
+        print("Commands (type + Enter):")
+        print("  1   - SYS_CMD_START  (IDLE → RUNNING, enables full telemetry)")
         print("  2   - SYS_CMD_STOP   (RUNNING → IDLE)")
         print("  3   - SYS_CMD_RESET  (ESTOP/ERROR → IDLE)")
-        print("  4   - SYS_CMD_ESTOP  (any → ESTOP)")
-        print("  e   - DC motor 0: enable velocity mode")
-        print("  d   - DC motor 0: disable")
-        print("  f   - DC motor 0: run at 500 ticks/s")
-        print("  r   - DC motor 0: run at -500 ticks/s (reverse)")
-        print("  p   - DC motor 0: direct PWM +150")
-        print("  sa  - Servo ch 0: enable + center (1500 µs)")
-        print("  sx  - Servo ch 0: disable")
-        print("  l   - NeoPixel 0: green")
-        print("  s   - Print statistics")
+        print("  4   - SYS_CMD_ESTOP")
+        print("  e/d - DC motor 0 enable (velocity) / disable")
+        print("  f/r - DC motor 0 forward / reverse 500 ticks/s")
+        print("  p   - DC motor 0 direct PWM +150")
+        print("  sa  - Servo ch 0 enable + center (1500 µs)")
+        print("  sx  - Servo ch 0 disable")
+        print("  l   - NeoPixel 0 green")
+        print("  s   - Print quality report now")
         print("  h   - Send heartbeat manually")
         print("  q   - Quit")
-        print("="*60)
-        print("Heartbeats are sent automatically every 200 ms.\n")
+        print("=" * 62)
+        print()
 
         try:
             while self.running:
-                # Auto-heartbeat
                 now = time.time()
+
+                # Auto-heartbeat
                 if now - self.last_heartbeat_time >= HEARTBEAT_INTERVAL:
                     self.send_heartbeat()
                     self.last_heartbeat_time = now
+
+                # Auto quality report
+                if now - self.last_stats_time >= STATS_INTERVAL:
+                    self.print_stats()
+                    self.last_stats_time = now
 
                 self.process_incoming()
 
