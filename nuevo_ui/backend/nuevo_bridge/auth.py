@@ -57,11 +57,17 @@ def decode_token(token: str) -> dict:
 
 
 # ─── Default users ────────────────────────────────────────────────────────────
-# These credentials are committed to git; users.json (with hashed passwords)
-# is NOT committed (see .gitignore). On first boot users.json is auto-created.
-_DEFAULT_USERS_PLAIN = {
-    "admin": {"role": "admin", "plain_password": "admin1540"},
-    "user":  {"role": "user",  "plain_password": "162"},
+# Passwords are pre-hashed (bcrypt) — plaintext is never stored in source.
+# To regenerate: python3 -c "import bcrypt; print(bcrypt.hashpw(b'<pw>', bcrypt.gensalt()).decode())"
+_DEFAULT_USERS = {
+    "admin": {
+        "role": "admin",
+        "password_hash": "$2b$12$lIim4XUxmvnT777xRMuCee9rZerLu0QHkbbxvZ72bD/8hmsnV7Mhu",
+    },
+    "user": {
+        "role": "user",
+        "password_hash": "$2b$12$ZiuN.Wowr1dJQohSctUIz./FrTGrxEoPPwSSgluqsjtlrao94MHWC",
+    },
 }
 
 # The "admin" username cannot be deleted (but CAN be renamed if desired).
@@ -69,15 +75,9 @@ PROTECTED_USERNAMES = {"admin"}  # usernames that cannot be deleted
 
 
 def _create_default_users() -> dict:
-    """Hash default passwords and return the users dict (called once on first boot)."""
-    print("[Auth] Hashing default passwords — this may take a moment…")
-    return {
-        name: {
-            "role": info["role"],
-            "password_hash": hash_password(info["plain_password"]),
-        }
-        for name, info in _DEFAULT_USERS_PLAIN.items()
-    }
+    """Return default users dict (called once on first boot to seed users.json)."""
+    print("[Auth] Creating default users.json…")
+    return {name: dict(info) for name, info in _DEFAULT_USERS.items()}
 
 
 # ─── User CRUD ────────────────────────────────────────────────────────────────
