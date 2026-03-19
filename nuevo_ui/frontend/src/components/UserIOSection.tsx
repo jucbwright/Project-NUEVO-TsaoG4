@@ -290,6 +290,18 @@ export function UserIOSection() {
                 </div>
               </div>
 
+              {/* RGB readout */}
+              {(() => {
+                const s = strips.find((s) => s.id === showPicker)!;
+                return (
+                  <div className="flex justify-center gap-3 mb-2 font-mono text-xs">
+                    <span className="text-red-400">R {s.r}</span>
+                    <span className="text-green-400">G {s.g}</span>
+                    <span className="text-blue-400">B {s.b}</span>
+                  </div>
+                );
+              })()}
+
               {/* Brightness slider */}
               <div className="space-y-2 w-48">
                 <div className="flex items-center justify-between">
