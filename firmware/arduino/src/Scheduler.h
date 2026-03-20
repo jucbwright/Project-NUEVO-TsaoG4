@@ -36,11 +36,15 @@
 
 #include <Arduino.h>
 
-// Maximum number of registered tasks
+// Maximum number of registered periodic tasks
 #define MAX_TASKS   8
+// Maximum number of registered fast cooperative tasks
+#define MAX_FAST_TASKS 8
 
 // Task callback type
 typedef void (*TaskCallback)(void);
+// Fast task callback type. Return true if the task made progress.
+typedef bool (*FastTaskCallback)(void);
 
 /**
  * @brief Soft scheduler task descriptor (internal use)
@@ -51,6 +55,12 @@ struct Task {
     uint32_t     lastRunMs;  // millis() at last execution
     uint8_t      priority;   // 0 = highest priority
     bool         enabled;    // Slot active?
+};
+
+struct FastTask {
+    FastTaskCallback callback; // Function to poll from loop()
+    uint8_t          priority; // 0 = highest priority
+    bool             enabled;  // Slot active?
 };
 
 /**
@@ -77,6 +87,19 @@ public:
     static int8_t registerTask(TaskCallback callback, uint16_t periodMs, uint8_t priority);
 
     /**
+     * @brief Register a fast cooperative task
+     *
+     * Fast tasks are polled from loop() every pass via serviceFastLane().
+     * They are intended for work-available services such as UART drain, TX
+     * drain, staged motor compute triggers, and debug/status chunk emission.
+     *
+     * @param callback Function to poll
+     * @param priority 0 = highest priority
+     * @return Fast task ID on success, -1 on failure
+     */
+    static int8_t registerFastTask(FastTaskCallback callback, uint8_t priority);
+
+    /**
      * @brief Run the highest-priority overdue task (call from loop())
      *
      * Executes at most one task per call.  Returns immediately if no task
@@ -84,6 +107,14 @@ public:
      * blocking code between tick() calls.
      */
     static void tick();
+    static void tickPeriodic();
+
+    /**
+     * @brief Poll all enabled fast tasks once in priority order.
+     *
+     * @return True if any fast task reported progress.
+     */
+    static bool serviceFastLane();
 
     /**
      * @brief Enable or disable a registered task
@@ -99,7 +130,9 @@ public:
 
 private:
     static Task    tasks[MAX_TASKS];
+    static FastTask fastTasks[MAX_FAST_TASKS];
     static uint8_t taskCount;
+    static uint8_t fastTaskCount;
 };
 
 #endif // SCHEDULER_H

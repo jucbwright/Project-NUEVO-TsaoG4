@@ -54,6 +54,13 @@
 
 class ISRScheduler {
 public:
+    static void attachDcEncoderInterrupts(void (*m1a)(void),
+                                          void (*m1b)(void),
+                                          void (*m2a)(void),
+                                          void (*m2b)(void));
+    static void attachDcEncoderPcints();
+    static void configureTimer1DcSlotISR();
+    static void configureTimer4PwmOnly();
     /**
      * @brief Configure Timer1 for the short round-robin DC slot and Timer4 for PWM only.
      *

@@ -9,8 +9,10 @@
 #include "config.h"
 
 // Static member initialisation
-Task    Scheduler::tasks[MAX_TASKS];
-uint8_t Scheduler::taskCount = 0;
+Task     Scheduler::tasks[MAX_TASKS];
+FastTask Scheduler::fastTasks[MAX_FAST_TASKS];
+uint8_t  Scheduler::taskCount = 0;
+uint8_t  Scheduler::fastTaskCount = 0;
 
 // ============================================================================
 // INIT
@@ -27,7 +29,13 @@ void Scheduler::init() {
         tasks[i].enabled   = false;
         tasks[i].lastRunMs = 0;
     }
+    for (uint8_t i = 0; i < MAX_FAST_TASKS; i++) {
+        fastTasks[i].callback = nullptr;
+        fastTasks[i].priority = 0;
+        fastTasks[i].enabled  = false;
+    }
     taskCount = 0;
+    fastTaskCount = 0;
 
 #ifdef DEBUG_SCHEDULER
     DEBUG_SERIAL.println(F("[Scheduler] Soft scheduler initialised (millis-based)"));
@@ -91,6 +99,50 @@ int8_t Scheduler::registerTask(TaskCallback callback, uint16_t periodMs, uint8_t
     return id;
 }
 
+int8_t Scheduler::registerFastTask(FastTaskCallback callback, uint8_t priority) {
+    if (callback == nullptr) {
+#ifdef DEBUG_SCHEDULER
+        DEBUG_SERIAL.println(F("[Scheduler] ERROR: null fast callback"));
+#endif
+        return -1;
+    }
+    if (priority > 7) {
+#ifdef DEBUG_SCHEDULER
+        DEBUG_SERIAL.println(F("[Scheduler] ERROR: fast priority must be 0-7"));
+#endif
+        return -1;
+    }
+    if (fastTaskCount >= MAX_FAST_TASKS) {
+#ifdef DEBUG_SCHEDULER
+        DEBUG_SERIAL.println(F("[Scheduler] ERROR: no fast task slots available"));
+#endif
+        return -1;
+    }
+
+    int8_t id = -1;
+    for (uint8_t i = 0; i < MAX_FAST_TASKS; i++) {
+        if (!fastTasks[i].enabled) {
+            id = (int8_t)i;
+            break;
+        }
+    }
+    if (id < 0) return -1;
+
+    fastTasks[id].callback = callback;
+    fastTasks[id].priority = priority;
+    fastTasks[id].enabled = true;
+    fastTaskCount++;
+
+#ifdef DEBUG_SCHEDULER
+    DEBUG_SERIAL.print(F("[Scheduler] Fast task #"));
+    DEBUG_SERIAL.print(id);
+    DEBUG_SERIAL.print(F(" registered, priority "));
+    DEBUG_SERIAL.println(priority);
+#endif
+
+    return id;
+}
+
 // ============================================================================
 // TICK (call from loop())
 // ============================================================================
@@ -102,6 +154,10 @@ int8_t Scheduler::registerTask(TaskCallback callback, uint16_t periodMs, uint8_t
  * has the highest priority (lowest number).  At most one task per call.
  */
 void Scheduler::tick() {
+    tickPeriodic();
+}
+
+void Scheduler::tickPeriodic() {
     uint32_t now = millis();
 
     int8_t  bestTask     = -1;
@@ -121,6 +177,23 @@ void Scheduler::tick() {
         tasks[bestTask].lastRunMs = now;
         tasks[bestTask].callback();
     }
+}
+
+bool Scheduler::serviceFastLane() {
+    bool madeProgress = false;
+
+    for (uint8_t priority = 0; priority <= 7; priority++) {
+        for (uint8_t i = 0; i < MAX_FAST_TASKS; i++) {
+            if (!fastTasks[i].enabled || fastTasks[i].priority != priority) {
+                continue;
+            }
+            if (fastTasks[i].callback != nullptr && fastTasks[i].callback()) {
+                madeProgress = true;
+            }
+        }
+    }
+
+    return madeProgress;
 }
 
 // ============================================================================

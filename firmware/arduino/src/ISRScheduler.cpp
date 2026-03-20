@@ -9,8 +9,35 @@
 #include "pins.h"
 #include "config.h"
 
-void ISRScheduler::init() {
-    noInterrupts();
+void ISRScheduler::attachDcEncoderInterrupts(void (*m1a)(void),
+                                             void (*m1b)(void),
+                                             void (*m2a)(void),
+                                             void (*m2b)(void)) {
+    attachInterrupt(digitalPinToInterrupt(PIN_M1_ENC_A), m1a, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_M1_ENC_B), m1b, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_M2_ENC_A), m2a, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_M2_ENC_B), m2b, CHANGE);
+}
+
+void ISRScheduler::attachDcEncoderPcints() {
+    // M3: PCINT2 group (Port K) — A14=PCINT22, A15=PCINT23
+    PCIFR |= _BV(PCIF2);
+    PCMSK2 |= _BV(PCINT22);
+#if ENCODER_3_MODE == ENCODER_4X
+    PCMSK2 |= _BV(PCINT23);
+#endif
+    PCICR |= _BV(PCIE2);
+
+    // M4: PCINT0 group (Port B) — pin11=PCINT5, pin12=PCINT6
+    PCIFR |= _BV(PCIF0);
+    PCMSK0 |= _BV(PCINT5);
+#if ENCODER_4_MODE == ENCODER_4X
+    PCMSK0 |= _BV(PCINT6);
+#endif
+    PCICR |= _BV(PCIE0);
+}
+
+void ISRScheduler::configureTimer1DcSlotISR() {
 
     // ========================================================================
     // Timer1: Fast PWM mode 14 — 800 Hz OVF → round-robin DC slot
@@ -40,7 +67,9 @@ void ISRScheduler::init() {
 #endif
 
     TIMSK1 = (1 << TOIE1);   // Timer1 round-robin ISR + PWM hardware
+}
 
+void ISRScheduler::configureTimer4PwmOnly() {
     // ========================================================================
     // Timer4: Fast PWM mode 14 — 10 kHz carrier for motor PWM only
     // ========================================================================
@@ -71,6 +100,12 @@ void ISRScheduler::init() {
 #endif
 
     TIMSK4 = 0;   // No Timer4 ISR in bring-up profile; keep PWM hardware only
+}
+
+void ISRScheduler::init() {
+    noInterrupts();
+    configureTimer1DcSlotISR();
+    configureTimer4PwmOnly();
 
     interrupts();
 }
