@@ -1,0 +1,72 @@
+.stepper-plot {
+  width: 100%;
+  min-height: 180px;
+  background-color: #0a0a0a;
+  border-radius: 4px;
+  position: relative;
+}
+
+.stepper-plot .uplot {
+  background-color: #0a0a0a !important;
+}
+
+.stepper-plot .u-legend {
+  background-color: rgba(26, 26, 26, 0.95) !important;
+  padding: 4px 8px !important;
+  font-size: 11px !important;
+  color: #e5e7eb !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 0 12px !important;
+}
+
+.stepper-plot .u-legend .u-series {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  cursor: pointer !important;
+  padding: 2px 4px !important;
+  border-radius: 3px !important;
+  transition: opacity 0.2s !important;
+}
+
+.stepper-plot .u-legend .u-series:hover {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.stepper-plot .u-legend .u-series.u-off {
+  opacity: 0.35 !important;
+}
+
+.stepper-plot .u-legend .u-marker {
+  width: 12px !important;
+  height: 3px !important;
+  border-radius: 2px !important;
+}
+
+.stepper-plot .u-legend .u-label {
+  color: #e5e7eb !important;
+  font-weight: 500 !important;
+}
+
+.stepper-plot .u-value {
+  display: none !important;
+}
+
+.stepper-plot .u-axis {
+  color: #9ca3af !important;
+}
+
+.stepper-plot .u-grid {
+  stroke: #333 !important;
+}
+
+.stepper-plot-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #6b7280;
+  font-size: 13px;
+  font-style: italic;
+}
