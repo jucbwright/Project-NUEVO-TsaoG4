@@ -29,6 +29,24 @@ import type {
   VoltageData,
 } from '../lib/wsProtocol'
 
+interface StepperMotorState {
+  status: StepperStatusItem | null
+  positionHistory: number[]
+  velocityHistory: number[]
+  timeHistory: number[]
+  recordingStartTs: number | null
+}
+
+function initSteppers(): StepperMotorState[] {
+  return [0, 1, 2, 3].map(() => ({
+    status: null,
+    positionHistory: [],
+    velocityHistory: [],
+    timeHistory: [],
+    recordingStartTs: null,
+  }))
+}
+
 interface DCMotorState {
   status: DCMotorItem | null
   positionHistory: number[]
@@ -205,7 +223,7 @@ function clearedRobotState(connection: ConnectionData | null, serialConnected: b
     system: null,
     voltage: null,
     dcMotors: initDCMotors(),
-    steppers: [null, null, null, null],
+    steppers: initSteppers(),
     servo: null,
     io: null,
     kinematics: null,
@@ -231,7 +249,7 @@ interface RobotState {
   voltage: VoltageData | null
   connection: ConnectionData | null
   dcMotors: DCMotorState[]
-  steppers: (StepperStatusItem | null)[]
+  steppers: StepperMotorState[]
   servo: ServoStatusAllData | null
   io: IOStatusData | null
   kinematics: KinematicsData | null
@@ -251,6 +269,7 @@ interface RobotState {
   stepConfigCache: Record<number, StepConfigRspData>
   dispatch: (topic: string, data: any, ts?: number) => void
   setMotorRecording: (motorIdx: number, active: boolean) => void
+  setStepperRecording: (stepperIdx: number, active: boolean) => void
   clearErrorLog: () => void
   clearWarningLog: () => void
 }
@@ -262,7 +281,7 @@ export const useRobotStore = create<RobotState>((set) => ({
   voltage: null,
   connection: null,
   dcMotors: initDCMotors(),
-  steppers: [null, null, null, null],
+  steppers: initSteppers(),
   servo: null,
   io: null,
   kinematics: null,
@@ -293,6 +312,18 @@ export const useRobotStore = create<RobotState>((set) => ({
         : null
       newDCMotors[motorIdx] = motor
       return { dcMotors: newDCMotors }
+    })
+  },
+
+  setStepperRecording: (stepperIdx: number, active: boolean) => {
+    set((state) => {
+      const next = [...state.steppers]
+      const s = { ...next[stepperIdx] }
+      s.recordingStartTs = active
+        ? (s.timeHistory[s.timeHistory.length - 1] ?? null)
+        : null
+      next[stepperIdx] = s
+      return { steppers: next }
     })
   },
 
@@ -538,11 +569,14 @@ export const useRobotStore = create<RobotState>((set) => ({
           const idx = incoming.stepperNumber - 1
           const nextSteppers = [...state.steppers]
           const prev = nextSteppers[idx]
-          if (prev) {
+          if (prev?.status) {
             nextSteppers[idx] = {
               ...prev,
-              maxSpeed: incoming.maxVelocity,
-              acceleration: incoming.acceleration,
+              status: {
+                ...prev.status,
+                maxSpeed: incoming.maxVelocity,
+                acceleration: incoming.acceleration,
+              },
             }
           }
           return { stepConfigCache: nextCache, steppers: nextSteppers }
@@ -551,17 +585,35 @@ export const useRobotStore = create<RobotState>((set) => ({
 
       case 'step_state_all':
         set((state) => {
+          const bridgeTimeMs = ts ? ts * 1000 : Date.now()
+          const cutoff = bridgeTimeMs - HISTORY_WINDOW_MS
           const next = [...state.steppers]
           for (const s of (data as StepStateAllData).steppers) {
             const idx = s.stepperNumber - 1
             if (idx < 0 || idx > 3) continue
             const cfg = state.stepConfigCache[s.stepperNumber]
-            next[idx] = {
+            const status: StepperStatusItem = {
               ...s,
               commandedCount: s.count,
               limitHit: s.limitFlags,
               maxSpeed: cfg?.maxVelocity ?? 0,
               acceleration: cfg?.acceleration ?? 0,
+            }
+            const prev = next[idx]
+            const isRecording = prev.recordingStartTs !== null
+            const newTime = [...prev.timeHistory, bridgeTimeMs]
+            const newPos  = [...prev.positionHistory, s.count]
+            const newVel  = [...prev.velocityHistory, s.currentSpeed]
+            let start = 0
+            if (!isRecording) {
+              while (start < newTime.length && newTime[start] < cutoff) start++
+            }
+            next[idx] = {
+              status,
+              recordingStartTs: prev.recordingStartTs,
+              timeHistory:     start > 0 ? newTime.slice(start) : newTime,
+              positionHistory: start > 0 ? newPos.slice(start)  : newPos,
+              velocityHistory: start > 0 ? newVel.slice(start)  : newVel,
             }
           }
           return { steppers: next }
