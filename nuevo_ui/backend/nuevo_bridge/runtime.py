@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Callable, Optional
 
 from .config import MOCK_MODE, MOCK_ODOMETRY_ENABLED
@@ -12,6 +13,7 @@ from .ws_manager import WSManager
 
 RosControllerFactory = Callable[["BridgeRuntime"], object]
 SerialManagerFactory = Callable[[MessageRouter, WSManager], object]
+ODOM_PARAM_REFRESH_INTERVAL_S = 5.0
 
 
 class BridgeRuntime:
@@ -38,6 +40,7 @@ class BridgeRuntime:
         self._query_task: Optional[asyncio.Task] = None
         self._started = False
         self.last_command_error: Optional[str] = None
+        self._last_odom_param_refresh = 0.0
 
     @property
     def ros_enabled(self) -> bool:
@@ -61,6 +64,10 @@ class BridgeRuntime:
                 await asyncio.sleep(1.0)
                 if self.serial_manager.stats.get("connected", False):
                     self.message_router.poll_runtime_queries()
+                    now = time.monotonic()
+                    if now - self._last_odom_param_refresh >= ODOM_PARAM_REFRESH_INTERVAL_S:
+                        if self._send_command("sys_odom_param_req", {"target": 0xFF}):
+                            self._last_odom_param_refresh = now
 
         self._query_task = asyncio.create_task(periodic_router_queries())
         self._started = True
@@ -90,7 +97,7 @@ class BridgeRuntime:
 
         self._started = False
 
-    def handle_command(self, cmd: str, data: dict) -> bool:
+    def _send_command(self, cmd: str, data: dict) -> bool:
         result = self.message_router.handle_outgoing(cmd, data)
         if result is None:
             self.last_command_error = self.message_router.last_command_error
@@ -98,6 +105,15 @@ class BridgeRuntime:
         tlv_type, payload = result
         self.serial_manager.send(tlv_type, payload)
         self.last_command_error = None
+        return True
+
+    def handle_command(self, cmd: str, data: dict) -> bool:
+        ok = self._send_command(cmd, data)
+        if not ok:
+            return False
+        if cmd == "sys_odom_param_set":
+            if self._send_command("sys_odom_param_req", {"target": 0xFF}):
+                self._last_odom_param_refresh = time.monotonic()
         return True
 
     def handle_ws_command(self, cmd: str, data: dict) -> bool:

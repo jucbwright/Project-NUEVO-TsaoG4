@@ -89,7 +89,8 @@ class BridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "rightMotorDirInverted": False,
             })
             self.assertTrue(ok)
-            tlv_type, payload = runtime.serial_manager.sent[-1]
+            self.assertEqual(len(runtime.serial_manager.sent), 2)
+            tlv_type, payload = runtime.serial_manager.sent[0]
             self.assertEqual(tlv_type, SYS_ODOM_PARAM_SET)
             self.assertEqual(payload.leftMotorId, 1)
             self.assertEqual(payload.rightMotorId, 3)
@@ -98,6 +99,9 @@ class BridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload.wheelDiameterMm, 80.0)
             self.assertEqual(payload.wheelBaseMm, 300.0)
             self.assertEqual(payload.initialThetaDeg, 45.0)
+            follow_up_type, follow_up_payload = runtime.serial_manager.sent[1]
+            self.assertEqual(follow_up_type, SYS_ODOM_PARAM_REQ)
+            self.assertEqual(follow_up_payload.target, 0xFF)
         finally:
             await runtime.stop()
 
