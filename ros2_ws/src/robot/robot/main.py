@@ -56,12 +56,15 @@ class MyFSM(RobotFSM):
 
     def __init__(self, robot: Robot) -> None:
         super().__init__(robot, initial_state="INIT")
-        self.path = np.array([
-            [0.0, 0.0],
-            [0.0, 500.0],
-            [500.0, 500.0],
-            [500.0, 0.0],
-        ])
+        self.path = self._densify_polyline(
+            np.array([
+                [0.0, 0.0],
+                [0.0, 500.0],
+                [500.0, 500.0],
+                [500.0, 0.0],
+            ]),
+            spacing_mm=25.0,
+        )
         self.remaining_path = self.path.copy()
         self.planner = PurePursuitPlanner(
             lookahead_dist=50.0,
@@ -187,6 +190,22 @@ class MyFSM(RobotFSM):
                 "[FSM] advancing to next waypoint: (%.2f, %.2f)"
                 % (self.remaining_path[0][0], self.remaining_path[0][1])
             )
+
+    @staticmethod
+    def _densify_polyline(control_points: np.ndarray, spacing_mm: float) -> np.ndarray:
+        dense_points: list[list[float]] = [[float(control_points[0][0]), float(control_points[0][1])]]
+        for start, end in zip(control_points[:-1], control_points[1:]):
+            dx = float(end[0] - start[0])
+            dy = float(end[1] - start[1])
+            segment_length = math.hypot(dx, dy)
+            steps = max(1, int(math.ceil(segment_length / spacing_mm)))
+            for step in range(1, steps + 1):
+                ratio = step / steps
+                dense_points.append([
+                    float(start[0] + dx * ratio),
+                    float(start[1] + dy * ratio),
+                ])
+        return np.array(dense_points)
 
 
 def run(robot: Robot) -> None:

@@ -635,6 +635,26 @@ void MessageCenter::sendTelemetry()
         sendSysPower();
     }
 
+    // ---- Low-latency telemetry first ----
+    // Kinematics and input state drive UI responsiveness and closed-loop robot
+    // behaviors. Emit them before bulk status streams so they still fit when
+    // the frame is near TX_FRAME_SOFT_LIMIT.
+    if (state != SYS_STATE_INIT &&
+        oddFastLane &&
+        currentMs - lastKinematicsSendMs_ >= kinematicsInterval)
+    {
+        lastKinematicsSendMs_ = currentMs;
+        sendSensorKinematics();
+    }
+
+    if (running &&
+        oddFastLane &&
+        currentMs - lastIOInputStateSendMs_ >= TELEMETRY_IO_INPUT_STATE_MS)
+    {
+        lastIOInputStateSendMs_ = currentMs;
+        sendIOInputState();
+    }
+
     // ---- Runtime streams (RUNNING only) ----
     if (running)
     {
@@ -647,20 +667,6 @@ void MessageCenter::sendTelemetry()
             sendDCStateAll();
         }
 
-        if (oddFastLane &&
-            currentMs - lastStepStateSendMs_ >= stepStateInterval)
-        {
-            lastStepStateSendMs_ = currentMs;
-            sendStepStateAll();
-        }
-
-        if (oddFastLane &&
-            currentMs - lastIOInputStateSendMs_ >= TELEMETRY_IO_INPUT_STATE_MS)
-        {
-            lastIOInputStateSendMs_ = currentMs;
-            sendIOInputState();
-        }
-
         if (SensorManager::isIMUAvailable() &&
             evenFastLane &&
             currentMs - lastIMUSendMs_ >= TELEMETRY_IMU_MS)
@@ -669,6 +675,12 @@ void MessageCenter::sendTelemetry()
             sendSensorIMU();
         }
 
+        if (oddFastLane &&
+            currentMs - lastStepStateSendMs_ >= stepStateInterval)
+        {
+            lastStepStateSendMs_ = currentMs;
+            sendStepStateAll();
+        }
     }
 
     // IMU data is useful in IDLE for bring-up and calibration workflows, so
@@ -681,14 +693,6 @@ void MessageCenter::sendTelemetry()
     {
         lastIMUSendMs_ = currentMs;
         sendSensorIMU();
-    }
-
-    if (state != SYS_STATE_INIT &&
-        oddFastLane &&
-        currentMs - lastKinematicsSendMs_ >= kinematicsInterval)
-    {
-        lastKinematicsSendMs_ = currentMs;
-        sendSensorKinematics();
     }
 
     // Servo status is needed in IDLE as well because the UI can enable and
