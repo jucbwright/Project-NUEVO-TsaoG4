@@ -17,6 +17,40 @@ class Stepper(IntEnum):
     STEPPER_4 = 4
 
 
+class DCMotorMode(IntEnum):
+    DISABLED = 0
+    POSITION = 1
+    VELOCITY = 2
+    PWM = 3
+    HOMING = 4
+
+
+class DCPidLoop(IntEnum):
+    POSITION = 0
+    VELOCITY = 1
+
+
+class StepMoveType(IntEnum):
+    ABSOLUTE = 0
+    RELATIVE = 1
+
+
+class StepperMotionState(IntEnum):
+    IDLE = 0
+    ACCEL = 1
+    CRUISE = 2
+    DECEL = 3
+    HOMING = 4
+
+
+class LEDMode(IntEnum):
+    OFF = 0
+    ON = 1
+    BLINK = 2
+    BREATHE = 3
+    PWM = 4
+
+
 class ServoChannel(IntEnum):
     CH_1 = 1
     CH_2 = 2
@@ -66,6 +100,10 @@ class LED(IntEnum):
     BLUE = 2
     ORANGE = 3
     PURPLE = 4
+
+
+BUTTON_COUNT = 10
+LIMIT_COUNT = 8
 
 
 # These rates mirror firmware/arduino/src/config.h.

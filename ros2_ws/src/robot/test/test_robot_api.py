@@ -4,6 +4,7 @@ import importlib
 import sys
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -130,6 +131,7 @@ class RobotApiTests(unittest.TestCase):
         if str(package_root) not in sys.path:
             sys.path.insert(0, str(package_root))
         cls.robot_module = importlib.import_module("robot.robot")
+        cls.hardware_map = importlib.import_module("robot.hardware_map")
 
     def setUp(self) -> None:
         self.node = FakeNode()
@@ -162,9 +164,27 @@ class RobotApiTests(unittest.TestCase):
         self.assertEqual(msg.mode, 1)
         self.assertEqual(msg.brightness, 255)
 
+    def test_led_mode_enum_matches_firmware_contract(self) -> None:
+        self.robot.set_led(1, 128, mode=self.hardware_map.LEDMode.BREATHE)
+        msg = self.node.publishers["/io_set_led"].published[-1]
+        self.assertEqual(msg.mode, 3)
+        self.assertEqual(msg.period_ms, 1000)
+        self.assertEqual(msg.duty_cycle, 500)
+
+    def test_blink_defaults_to_symmetric_duty_cycle(self) -> None:
+        self.robot.set_led(1, 255, mode=self.hardware_map.LEDMode.BLINK)
+        msg = self.node.publishers["/io_set_led"].published[-1]
+        self.assertEqual(msg.mode, 2)
+        self.assertEqual(msg.period_ms, 1000)
+        self.assertEqual(msg.duty_cycle, 500)
+
     def test_invalid_motor_number_fails_fast(self) -> None:
         with self.assertRaisesRegex(ValueError, "motor_id must be between 1 and 4"):
             self.robot.set_motor_velocity(0, 100.0)
+
+    def test_invalid_pid_loop_fails_fast(self) -> None:
+        with self.assertRaisesRegex(ValueError, "loop_type must be one of"):
+            self.robot.request_pid(1, 2)
 
     def test_button_edges_are_latched_in_subscription_callback(self) -> None:
         first = self.robot_module.IOInputState()
@@ -180,6 +200,31 @@ class RobotApiTests(unittest.TestCase):
         self.assertTrue(self.robot.get_button(1))
         self.assertTrue(self.robot.was_button_pressed(1))
         self.assertFalse(self.robot.was_button_pressed(1))
+
+    def test_wait_helpers_translate_public_ids_to_state_array_indices(self) -> None:
+        dc_state = types.SimpleNamespace(
+            motors=[
+                types.SimpleNamespace(position=0, mode=0),
+                types.SimpleNamespace(position=0, mode=0),
+                types.SimpleNamespace(position=0, mode=0),
+                types.SimpleNamespace(position=123, mode=0),
+            ]
+        )
+        step_state = types.SimpleNamespace(
+            steppers=[
+                types.SimpleNamespace(motion_state=1),
+                types.SimpleNamespace(motion_state=1),
+                types.SimpleNamespace(motion_state=1),
+                types.SimpleNamespace(motion_state=0),
+            ]
+        )
+        self.robot._dc_state = dc_state
+        self.robot._step_state = step_state
+
+        self.assertTrue(self.robot._wait_dc_position(4, 123, 0, 0.01))
+        self.assertTrue(self.robot._wait_dc_not_homing(4, 0.01))
+        with mock.patch.object(self.robot_module.time, "sleep", lambda *_args, **_kwargs: None):
+            self.assertTrue(self.robot._wait_stepper_idle(4, 0.01))
 
 
 if __name__ == "__main__":

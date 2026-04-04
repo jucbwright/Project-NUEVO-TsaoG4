@@ -77,15 +77,15 @@ FSM/path-planner threads read it.
 
 | Method | Notes |
 |---|---|
-| `get_pose() → (x, y, theta)` | x, y in user units; theta in radians |
-| `get_velocity() → (vx, vy, v_theta)` | vx, vy in user units/s; v_theta in rad/s |
+| `get_pose() → (x, y, theta_deg)` | x, y in user units; theta in degrees |
+| `get_velocity() → (vx, vy, v_theta_deg_s)` | vx, vy in user units/s; v_theta in degrees/s |
 | `wait_for_pose_update(timeout=None) → bool` | blocks until next `/sensor_kinematics` tick (~25 Hz) |
 
 #### Differential drive — velocity
 
 | Method | Blocking | Notes |
 |---|---|---|
-| `set_velocity(linear, angular)` | no | body-frame: linear in user-units/s, angular in rad/s; firmware uses diff-drive mixing |
+| `set_velocity(linear, angular_deg_s)` | no | body-frame: linear in user-units/s, angular in degrees/s; firmware uses diff-drive mixing |
 | `set_left_wheel(motor_id)` / `set_right_wheel(motor_id)` | no | configure which DC motors are used by diff-drive helpers |
 | `set_motor_velocity(motor_id, velocity)` | no | per-motor; velocity in user-units/s → ticks/s |
 | `stop()` | no | zero velocity on both drive motors; does NOT ESTOP |
@@ -128,12 +128,12 @@ handle.cancel()                    # abort
 |---|---|---|
 | `set_motor_pwm(motor_id, pwm)` | no | raw PWM −255…255 |
 | `set_motor_position(motor_id, ticks, blocking=True, timeout=None)` | optional | position control mode |
-| `enable_motor(motor_id)` | no | publishes `DCEnable` |
+| `enable_motor(motor_id, mode=DCMotorMode.VELOCITY)` | no | publishes `DCEnable`; mode follows firmware enum |
 | `disable_motor(motor_id)` | no | publishes `DCEnable` |
 | `home_motor(motor_id, blocking=True, timeout=None)` | optional | publishes `DCHome` |
 | `reset_motor_position(motor_id)` | no | publishes `DCResetPosition` |
-| `set_pid_gains(motor_id, loop_type, kp, ki, kd, max_output, max_integral)` | no | publishes `DCPidSet` |
-| `request_pid(motor_id, loop_type)` | no | publishes `DCPidReq`; result arrives on `/dc_pid` topic |
+| `set_pid_gains(motor_id, loop_type, kp, ki, kd, max_output, max_integral)` | no | publishes `DCPidSet`; `loop_type` uses `DCPidLoop` (`POSITION=0`, `VELOCITY=1`) |
+| `request_pid(motor_id, loop_type)` | no | publishes `DCPidReq`; result arrives on `/dc_pid_rsp` |
 | `get_dc_state() → DCStateAll` | no | cached `/dc_state_all` |
 
 #### Stepper motors
@@ -141,7 +141,7 @@ handle.cancel()                    # abort
 | Method | Blocking | Notes |
 |---|---|---|
 | `step_enable(stepper_id)` / `step_disable(stepper_id)` | no | |
-| `step_move(stepper_id, steps, blocking=True, timeout=None)` | optional | publishes `StepMove` |
+| `step_move(stepper_id, steps, move_type=StepMoveType.RELATIVE, blocking=True, timeout=None)` | optional | publishes `StepMove`; `move_type` uses the firmware enum |
 | `step_home(stepper_id, blocking=True, timeout=None)` | optional | publishes `StepHome` |
 | `step_set_config(stepper_id, ...)` | no | publishes `StepConfigSet` |
 | `get_step_state() → StepStateAll` | no | cached `/step_state_all` |
@@ -158,13 +158,13 @@ handle.cancel()                    # abort
 
 | Method | Blocking | Notes |
 |---|---|---|
-| `get_button(button_id) → bool` | no | reads bitmask from cached `IOInputState`; ids 1–16 |
+| `get_button(button_id) → bool` | no | reads bitmask from cached `IOInputState`; ids 1–10 on current firmware |
 | `was_button_pressed(button_id, consume=True) → bool` | no | rising-edge latch captured in ROS callback |
 | `wait_for_button(button_id, timeout=None) → bool` | yes | blocks until button pressed or timeout |
-| `get_limit(limit_id) → bool` | no | same approach as buttons |
+| `get_limit(limit_id) → bool` | no | same approach as buttons; ids 1–8 on current firmware |
 | `was_limit_triggered(limit_id, consume=True) → bool` | no | rising-edge latch captured in ROS callback |
 | `wait_for_limit(limit_id, timeout=None) → bool` | yes | blocks until limit triggered |
-| `set_led(led_id, brightness, mode=None)` | no | publishes `IOSetLed`; LED IDs follow firmware I/O numbering |
+| `set_led(led_id, brightness, mode=None, period_ms=None, duty_cycle=500)` | no | publishes `IOSetLed`; `mode` uses `LEDMode` (`OFF`, `ON`, `BLINK`, `BREATHE`, `PWM`); blink/breathe default to 1000 ms and `duty_cycle=500` |
 | `set_neopixel(index, r, g, b)` | no | publishes `IOSetNeopixel`; index is 0-based |
 
 `wait_for_button` and `was_button_pressed` use work done inside the IO
@@ -172,6 +172,10 @@ subscription callback when the requested bit transitions from 0→1, so short
 button presses are not missed even if the FSM loop runs slower. For simple
 FSMs that watch one button per state, `get_button()` is often the cleaner
 choice because it avoids carrying a latched edge across a later state change.
+
+For LED timing, `duty_cycle` is in permille (`0..1000`). In `BLINK` mode it is
+the ON-time share of the full period. In `BREATHE` mode it is the rise-time
+share of the full period, with the remaining time used for the fade back down.
 
 #### IMU
 

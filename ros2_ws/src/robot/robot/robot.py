@@ -36,7 +36,17 @@ from bridge_interfaces.msg import (
 )
 from bridge_interfaces.srv import SetFirmwareState
 
-from robot.hardware_map import DEFAULT_NAV_HZ, Motor
+from robot.hardware_map import (
+    BUTTON_COUNT,
+    DCMotorMode,
+    DCPidLoop,
+    DEFAULT_NAV_HZ,
+    LEDMode,
+    LIMIT_COUNT,
+    Motor,
+    StepMoveType,
+    StepperMotionState,
+)
 
 
 # =============================================================================
@@ -101,7 +111,7 @@ class Robot:
 
     Motor IDs are 1-based (1–4). Stepper IDs are 1-based (1–4).
     Servo channels are 1-based (1–16).
-    Button and limit IDs are 1-based (1–16).
+    Button IDs are 1-based (1–10). Limit IDs are 1-based (1–8).
 
     LED IDs and NeoPixel indices follow the current firmware I/O numbering and
     remain 0-based.
@@ -498,12 +508,16 @@ class Robot:
             return True
         return self._wait_dc_position(motor_id, ticks, tolerance_ticks, timeout)
 
-    def enable_motor(self, motor_id: int, mode: int = 2) -> None:
+    def enable_motor(
+        self,
+        motor_id: int,
+        mode: DCMotorMode | int = DCMotorMode.VELOCITY,
+    ) -> None:
         """
-        Enable a DC motor.
-        mode: 1=position, 2=velocity (default), 3=pwm
+        Enable a DC motor in the requested firmware mode.
         """
         motor_id = self._require_id("motor_id", motor_id, 1, 4)
+        mode = self._require_enum("mode", mode, DCMotorMode)
         msg = DCEnable()
         msg.motor_number = motor_id
         msg.mode = mode
@@ -514,7 +528,7 @@ class Robot:
         motor_id = self._require_id("motor_id", motor_id, 1, 4)
         msg = DCEnable()
         msg.motor_number = motor_id
-        msg.mode = 0
+        msg.mode = int(DCMotorMode.DISABLED)
         self._dc_en_pub.publish(msg)
 
     def home_motor(
@@ -550,7 +564,7 @@ class Robot:
     def set_pid_gains(
         self,
         motor_id: int,
-        loop_type: int,
+        loop_type: DCPidLoop | int,
         kp: float,
         ki: float,
         kd: float,
@@ -559,9 +573,11 @@ class Robot:
     ) -> None:
         """
         Set PID gains for a DC motor.
-        loop_type: 1=position, 2=velocity
+        loop_type follows the firmware enum:
+        0=position, 1=velocity.
         """
         motor_id = self._require_id("motor_id", motor_id, 1, 4)
+        loop_type = self._require_enum("loop_type", loop_type, DCPidLoop)
         msg = DCPidSet()
         msg.motor_number  = motor_id
         msg.loop_type     = loop_type
@@ -572,12 +588,14 @@ class Robot:
         msg.max_integral  = float(max_integral)
         self._dc_pid_set.publish(msg)
 
-    def request_pid(self, motor_id: int, loop_type: int) -> None:
+    def request_pid(self, motor_id: int, loop_type: DCPidLoop | int) -> None:
         """
         Request PID parameters from firmware. Response arrives on /dc_pid_rsp topic.
-        loop_type: 1=position, 2=velocity
+        loop_type follows the firmware enum:
+        0=position, 1=velocity.
         """
         motor_id = self._require_id("motor_id", motor_id, 1, 4)
+        loop_type = self._require_enum("loop_type", loop_type, DCPidLoop)
         msg = DCPidReq()
         msg.motor_number = motor_id
         msg.loop_type    = loop_type
@@ -612,16 +630,18 @@ class Robot:
         self,
         stepper_id: int,
         steps: int,
-        move_type: int = 1,
+        move_type: StepMoveType | int = StepMoveType.RELATIVE,
         blocking: bool = True,
         timeout: float = None,
     ) -> bool:
         """
         Move a stepper motor.
-        move_type: 0=absolute, 1=relative
+        move_type follows the firmware enum:
+        0=absolute, 1=relative.
         Returns True when motion completes, False on timeout.
         """
         stepper_id = self._require_id("stepper_id", stepper_id, 1, 4)
+        move_type = self._require_enum("move_type", move_type, StepMoveType)
         msg = StepMove()
         msg.stepper_number = stepper_id
         msg.move_type      = move_type
@@ -724,10 +744,10 @@ class Robot:
 
     def get_button(self, button_id: int) -> bool:
         """
-        Non-blocking: current state of button button_id (1–16).
+        Non-blocking: current state of button button_id (1–10).
         Reads from the latest cached IOInputState message.
         """
-        button_id = self._require_id("button_id", button_id, 1, 16)
+        button_id = self._require_id("button_id", button_id, 1, BUTTON_COUNT)
         with self._lock:
             return bool((self._buttons >> (button_id - 1)) & 1)
 
@@ -738,7 +758,7 @@ class Robot:
         Edges are latched in the ROS subscription callback at firmware telemetry
         rate, so short presses are not lost when the FSM loop runs slower.
         """
-        button_id = self._require_id("button_id", button_id, 1, 16)
+        button_id = self._require_id("button_id", button_id, 1, BUTTON_COUNT)
         mask = 1 << (button_id - 1)
         with self._lock:
             pressed = bool(self._button_edges & mask)
@@ -751,7 +771,7 @@ class Robot:
         Blocking: wait until button_id transitions from not-pressed to pressed.
         Returns True if pressed within timeout, False on timeout.
         """
-        button_id = self._require_id("button_id", button_id, 1, 16)
+        button_id = self._require_id("button_id", button_id, 1, BUTTON_COUNT)
         with self._lock:
             if (self._buttons >> (button_id - 1)) & 1:
                 return True
@@ -764,14 +784,14 @@ class Robot:
         return pressed
 
     def get_limit(self, limit_id: int) -> bool:
-        """Non-blocking: current state of limit switch limit_id (1–16)."""
-        limit_id = self._require_id("limit_id", limit_id, 1, 16)
+        """Non-blocking: current state of limit switch limit_id (1–8)."""
+        limit_id = self._require_id("limit_id", limit_id, 1, LIMIT_COUNT)
         with self._lock:
             return bool((self._limits >> (limit_id - 1)) & 1)
 
     def was_limit_triggered(self, limit_id: int, consume: bool = True) -> bool:
         """Return True once per rising edge seen on limit_id."""
-        limit_id = self._require_id("limit_id", limit_id, 1, 16)
+        limit_id = self._require_id("limit_id", limit_id, 1, LIMIT_COUNT)
         mask = 1 << (limit_id - 1)
         with self._lock:
             triggered = bool(self._limit_edges & mask)
@@ -781,7 +801,7 @@ class Robot:
 
     def wait_for_limit(self, limit_id: int, timeout: float = None) -> bool:
         """Blocking: wait until limit switch limit_id is triggered."""
-        limit_id = self._require_id("limit_id", limit_id, 1, 16)
+        limit_id = self._require_id("limit_id", limit_id, 1, LIMIT_COUNT)
         with self._lock:
             if (self._limits >> (limit_id - 1)) & 1:
                 return True
@@ -797,22 +817,35 @@ class Robot:
         self,
         led_id: int,
         brightness: int,
-        mode: int | None = None,
-        period_ms: int = 0,
-        duty_cycle: int = 0,
+        mode: LEDMode | int | None = None,
+        period_ms: int | None = None,
+        duty_cycle: int = 500,
     ) -> None:
         """
         Control an onboard LED.
         When mode is omitted, brightness 0 maps to OFF and non-zero brightness
         maps to steady ON. Explicit modes follow the firmware contract:
-        0=off, 1=steady, 2=blink, 3=fade.
+        OFF=0, ON=1, BLINK=2, BREATHE=3, PWM=4.
+        BLINK and BREATHE default to a 1000 ms period when none is supplied.
+        duty_cycle is in permille (0-1000). For BLINK it controls the ON-time
+        share of the period. For BREATHE it controls the rise-time share of
+        the period; 500 gives a symmetric inhale/exhale.
         """
+        led_id = self._require_id("led_id", led_id, 0, 4)
+        clamped_brightness = max(0, min(255, int(brightness)))
+        resolved_mode = (
+            int(LEDMode.OFF if clamped_brightness == 0 else LEDMode.ON)
+            if mode is None
+            else self._require_enum("mode", mode, LEDMode)
+        )
+        if period_ms is None:
+            period_ms = 1000 if resolved_mode in (int(LEDMode.BLINK), int(LEDMode.BREATHE)) else 0
         msg = IOSetLed()
         msg.led_id     = led_id
-        msg.brightness = max(0, min(255, int(brightness)))
-        msg.mode       = (0 if msg.brightness == 0 else 1) if mode is None else int(mode)
-        msg.period_ms  = period_ms
-        msg.duty_cycle = duty_cycle
+        msg.brightness = clamped_brightness
+        msg.mode       = resolved_mode
+        msg.period_ms  = max(0, int(period_ms))
+        msg.duty_cycle = max(0, min(1000, int(duty_cycle)))
         self._led_pub.publish(msg)
 
     def set_neopixel(self, index: int, red: int, green: int, blue: int) -> None:
@@ -919,11 +952,12 @@ class Robot:
     def _wait_dc_position(
         self, motor_id: int, target: int, tolerance: int, timeout: float
     ) -> bool:
+        motor_idx = motor_id - 1
         deadline = time.monotonic() + timeout if timeout else None
         while True:
             with self._lock:
                 dc = self._dc_state
-            if dc is not None and abs(dc.motors[motor_id].position - target) <= tolerance:
+            if dc is not None and abs(dc.motors[motor_idx].position - target) <= tolerance:
                 return True
             if deadline and time.monotonic() > deadline:
                 return False
@@ -931,12 +965,13 @@ class Robot:
 
     def _wait_dc_not_homing(self, motor_id: int, timeout: float) -> bool:
         """Wait until a DC motor's mode is no longer 4 (homing)."""
+        motor_idx = motor_id - 1
         deadline = time.monotonic() + timeout if timeout else None
         time.sleep(0.1)  # Give firmware time to start the homing move
         while True:
             with self._lock:
                 dc = self._dc_state
-            if dc is not None and dc.motors[motor_id].mode != 4:
+            if dc is not None and dc.motors[motor_idx].mode != int(DCMotorMode.HOMING):
                 return True
             if deadline and time.monotonic() > deadline:
                 return False
@@ -944,12 +979,13 @@ class Robot:
 
     def _wait_stepper_idle(self, stepper_id: int, timeout: float) -> bool:
         """Wait until stepper motion_state == 0 (idle)."""
+        stepper_idx = stepper_id - 1
         deadline = time.monotonic() + timeout if timeout else None
         time.sleep(0.1)  # Give firmware time to start moving
         while True:
             with self._lock:
                 step = self._step_state
-            if step is not None and step.steppers[stepper_id].motion_state == 0:
+            if step is not None and step.steppers[stepper_idx].motion_state == int(StepperMotionState.IDLE):
                 return True
             if deadline and time.monotonic() > deadline:
                 return False
@@ -970,6 +1006,14 @@ class Robot:
         if not low <= value <= high:
             raise ValueError(f"{name} must be between {low} and {high}, got {value}")
         return value
+
+    @staticmethod
+    def _require_enum(name: str, value: int, enum_type: type[IntEnum]) -> int:
+        try:
+            return int(enum_type(int(value)))
+        except (TypeError, ValueError) as exc:
+            valid = ", ".join(f"{member.name}={int(member)}" for member in enum_type)
+            raise ValueError(f"{name} must be one of: {valid}") from exc
 
     def _send_body_velocity_mm(self, linear_mm_s: float, angular_rad_s: float) -> None:
         """Diff-drive mixing and publish. All values in mm/s and rad/s."""
