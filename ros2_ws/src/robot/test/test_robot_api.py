@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import threading
 import types
 import unittest
 from unittest import mock
@@ -258,6 +259,147 @@ class RobotApiTests(unittest.TestCase):
         msg = self.node.publishers["/io_set_led"].published[-1]
         self.assertEqual(msg.mode, 1)
         self.assertEqual(msg.brightness, 255)
+
+    def test_motion_handle_reports_finished(self) -> None:
+        finished = threading.Event()
+        cancel = threading.Event()
+        handle = self.robot_module.MotionHandle(finished, cancel)
+
+        self.assertFalse(handle.is_finished())
+        self.assertFalse(handle.is_done())
+
+        finished.set()
+
+        self.assertTrue(handle.is_finished())
+        self.assertTrue(handle.is_done())
+
+    def test_purepursuit_follow_path_requires_waypoints(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            self.robot.purepursuit_follow_path(
+                [],
+                velocity=100.0,
+                lookahead=100.0,
+                tolerance=20.0,
+                blocking=False,
+            )
+
+    def test_apf_follow_path_requires_waypoints(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            self.robot.apf_follow_path(
+                [],
+                velocity=100.0,
+                lookahead=100.0,
+                tolerance=20.0,
+                repulsion_range=150.0,
+                blocking=False,
+            )
+
+    def test_unit_dependent_navigation_parameters_must_be_explicit(self) -> None:
+        with self.assertRaises(TypeError):
+            self.robot.move_to(100.0, 0.0, 100.0)
+
+        with self.assertRaises(TypeError):
+            self.robot.move_by(100.0, 0.0, 100.0)
+
+        with self.assertRaises(TypeError):
+            self.robot.purepursuit_follow_path([(0.0, 0.0), (100.0, 0.0)], velocity=100.0)
+
+    def test_purepursuit_follow_path_rejects_overlapping_motion(self) -> None:
+        self.robot._nav_thread = types.SimpleNamespace(is_alive=lambda: True)
+
+        with self.assertRaisesRegex(RuntimeError, "Another motion is still running"):
+            self.robot.purepursuit_follow_path(
+                [(0.0, 0.0), (100.0, 0.0)],
+                velocity=100.0,
+                lookahead=100.0,
+                tolerance=20.0,
+                blocking=False,
+            )
+
+    def test_apf_follow_path_rejects_overlapping_motion(self) -> None:
+        self.robot._nav_thread = types.SimpleNamespace(is_alive=lambda: True)
+
+        with self.assertRaisesRegex(RuntimeError, "Another motion is still running"):
+            self.robot.apf_follow_path(
+                [(0.0, 0.0), (100.0, 0.0)],
+                velocity=100.0,
+                lookahead=100.0,
+                tolerance=20.0,
+                repulsion_range=150.0,
+                blocking=False,
+            )
+
+    def test_move_forward_uses_current_heading(self) -> None:
+        self.robot._pose = (10.0, 20.0, 0.0)
+
+        with mock.patch.object(self.robot, "move_to", return_value="ok") as move_to:
+            result = self.robot.move_forward(100.0, 50.0, tolerance=10.0, blocking=False)
+
+        self.assertEqual(result, "ok")
+        move_to.assert_called_once_with(
+            110.0,
+            20.0,
+            50.0,
+            tolerance=10.0,
+            blocking=False,
+            timeout=None,
+        )
+
+    def test_move_backward_uses_current_heading(self) -> None:
+        self.robot._pose = (10.0, 20.0, self.robot_module.math.pi / 2.0)
+
+        with mock.patch.object(self.robot, "move_to", return_value="ok") as move_to:
+            result = self.robot.move_backward(100.0, 50.0, tolerance=10.0, blocking=True)
+
+        self.assertEqual(result, "ok")
+        move_to.assert_called_once()
+        x_arg, y_arg, velocity_arg = move_to.call_args.args[:3]
+        self.assertAlmostEqual(x_arg, 10.0, places=6)
+        self.assertAlmostEqual(y_arg, -80.0, places=6)
+        self.assertEqual(velocity_arg, 50.0)
+        self.assertEqual(move_to.call_args.kwargs["tolerance"], 10.0)
+        self.assertTrue(move_to.call_args.kwargs["blocking"])
+
+    def test_set_obstacles_converts_current_unit_to_mm(self) -> None:
+        self.robot.set_unit(self.robot_module.Unit.INCH)
+
+        self.robot.set_obstacles([(1.0, 2.0)])
+
+        self.assertEqual(self.robot._get_obstacles_mm(), [(25.4, 50.8)])
+        self.assertEqual(self.robot.get_obstacles(), [(1.0, 2.0)])
+
+    def test_obstacle_provider_is_combined_with_cached_obstacles(self) -> None:
+        self.robot.set_obstacles([(10.0, 20.0)])
+        self.robot.set_obstacle_provider(lambda: [(30.0, -40.0)])
+
+        self.assertEqual(self.robot._get_obstacles_mm(), [(10.0, 20.0), (30.0, -40.0)])
+        self.assertEqual(self.robot.get_obstacles(), [(10.0, 20.0), (30.0, -40.0)])
+
+    def test_path_progress_does_not_finish_early_on_closed_loop(self) -> None:
+        remaining = [
+            (0.0, 0.0),
+            (0.0, 100.0),
+            (100.0, 100.0),
+            (100.0, 0.0),
+            (0.0, 0.0),
+        ]
+
+        advanced = self.robot._advance_remaining_path(
+            remaining,
+            x_mm=0.0,
+            y_mm=0.0,
+            advance_radius_mm=20.0,
+        )
+
+        self.assertEqual(
+            advanced,
+            [
+                (0.0, 100.0),
+                (100.0, 100.0),
+                (100.0, 0.0),
+                (0.0, 0.0),
+            ],
+        )
 
     def test_led_mode_enum_matches_firmware_contract(self) -> None:
         self.robot.set_led(1, 128, mode=self.hardware_map.LEDMode.BREATHE)

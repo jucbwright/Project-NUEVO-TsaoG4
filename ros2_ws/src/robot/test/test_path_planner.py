@@ -11,7 +11,7 @@ package_root = Path(__file__).resolve().parents[1]
 if str(package_root) not in sys.path:
     sys.path.insert(0, str(package_root))
 
-from robot.path_planner import PurePursuitPlanner
+from robot.path_planner import APFPlanner, PurePursuitPlanner
 
 
 class PurePursuitPlannerTests(unittest.TestCase):
@@ -52,6 +52,48 @@ class PurePursuitPlannerTests(unittest.TestCase):
         self.assertAlmostEqual(linear, 0.0, places=3)
         self.assertGreater(angular, 0.0)
         self.assertLessEqual(angular, 1.0)
+
+
+class APFPlannerTests(unittest.TestCase):
+    def test_compute_velocity_is_straight_on_without_obstacles(self) -> None:
+        planner = APFPlanner(
+            lookahead_dist=100.0,
+            max_linear=100.0,
+            max_angular=1.0,
+        )
+
+        linear, angular = planner.compute_velocity(
+            pose=(0.0, 0.0, 0.0),
+            waypoints=np.array([[100.0, 0.0]]),
+            max_linear=100.0,
+        )
+
+        self.assertGreater(linear, 0.0)
+        self.assertAlmostEqual(angular, 0.0, places=3)
+
+    def test_compute_velocity_turns_away_from_front_left_obstacle(self) -> None:
+        planner = APFPlanner(
+            lookahead_dist=100.0,
+            max_linear=100.0,
+            max_angular=1.0,
+            repulsion_gain=800.0,
+            repulsion_range=200.0,
+            obstacle_provider=lambda: [(120.0, 40.0)],
+        )
+
+        linear, angular = planner.compute_velocity(
+            pose=(0.0, 0.0, 0.0),
+            waypoints=np.array([[200.0, 0.0]]),
+            max_linear=100.0,
+        )
+
+        self.assertGreaterEqual(linear, 0.0)
+        self.assertLess(angular, 0.0)
+
+    def test_get_obstacles_uses_provider(self) -> None:
+        planner = APFPlanner(obstacle_provider=lambda: [(10.0, 20.0), (30.0, -40.0)])
+
+        self.assertEqual(planner.get_obstacles(), [(10.0, 20.0), (30.0, -40.0)])
 
 
 if __name__ == "__main__":

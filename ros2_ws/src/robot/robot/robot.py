@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import math
 import time
 import threading
@@ -77,22 +78,26 @@ class MotionHandle:
     Handle for a non-blocking navigation command.
 
     Example:
-        handle = robot.move_to(500, 0, 200, blocking=False)
+        handle = robot.move_to(500, 0, 200, tolerance=15, blocking=False)
         # ... do other things ...
         success = handle.wait(timeout=10.0)
     """
 
-    def __init__(self, done_event: threading.Event, cancel_event: threading.Event) -> None:
-        self._done   = done_event
+    def __init__(self, finished_event: threading.Event, cancel_event: threading.Event) -> None:
+        self._finished = finished_event
         self._cancel = cancel_event
 
     def wait(self, timeout: float = None) -> bool:
-        """Block until motion completes. Returns True on success, False on timeout."""
-        return self._done.wait(timeout=timeout)
+        """Block until motion finishes. Returns True if it finished before timeout."""
+        return self._finished.wait(timeout=timeout)
+
+    def is_finished(self) -> bool:
+        """Non-blocking poll. Returns True if motion has finished."""
+        return self._finished.is_set()
 
     def is_done(self) -> bool:
-        """Non-blocking poll. Returns True if motion has completed."""
-        return self._done.is_set()
+        """Backward-compatible alias for is_finished()."""
+        return self.is_finished()
 
     def cancel(self) -> None:
         """Abort this motion command. The robot will stop."""
@@ -177,6 +182,8 @@ class Robot:
         self._button_edges: int = 0
         self._limit_edges: int = 0
         self._have_io_input: bool = False
+        self._obstacles_mm: list[tuple[float, float]] = []
+        self._obstacle_provider: Callable[[], list[tuple[float, float]]] | None = None
 
         # ── Events ────────────────────────────────────────────────────────────
         self._pose_event: threading.Event = threading.Event()
@@ -448,6 +455,49 @@ class Robot:
         """Block until the next /sensor_kinematics message arrives (~25 Hz)."""
         return self._pose_event.wait(timeout=timeout)
 
+    def set_obstacles(self, obstacles: list[tuple[float, float]]) -> None:
+        """
+        Cache APF obstacles in the robot frame using the current user length unit.
+
+        Each obstacle is (x_forward, y_left) relative to the robot. Future lidar
+        code can either call this repeatedly with fresh detections or install a
+        live provider with set_obstacle_provider().
+        """
+        converted = [
+            (
+                self._require_finite_float("obstacle_x", obs_x) * self._unit.value,
+                self._require_finite_float("obstacle_y", obs_y) * self._unit.value,
+            )
+            for obs_x, obs_y in obstacles
+        ]
+        with self._lock:
+            self._obstacles_mm = converted
+
+    def clear_obstacles(self) -> None:
+        """Clear the cached APF obstacle list set by set_obstacles()."""
+        with self._lock:
+            self._obstacles_mm = []
+
+    def get_obstacles(self) -> list[tuple[float, float]]:
+        """Return the current APF obstacles in the current user length unit."""
+        scale = self._unit.value
+        return [(x_mm / scale, y_mm / scale) for x_mm, y_mm in self._get_obstacles_mm()]
+
+    def set_obstacle_provider(
+        self,
+        provider: Callable[[], list[tuple[float, float]]] | None,
+    ) -> None:
+        """
+        Register a live APF obstacle callback that returns robot-frame positions in mm.
+
+        TODO: a future lidar/object-detection node can install a provider here so
+        APF follows the latest obstacle snapshot without changing the student API.
+        """
+        if provider is not None and not callable(provider):
+            raise TypeError("provider must be callable or None")
+        with self._lock:
+            self._obstacle_provider = provider
+
     # =========================================================================
     # Differential drive — velocity commands
     # =========================================================================
@@ -522,8 +572,8 @@ class Robot:
         x: float,
         y: float,
         velocity: float,
+        tolerance: float,
         blocking: bool = True,
-        tolerance: float = 15,
         timeout: float = None,
     ):
         """
@@ -538,9 +588,16 @@ class Robot:
         y_mm   = y         * self._unit.value
         vel_mm = velocity  * self._unit.value
         tol_mm = tolerance * self._unit.value
+        lookahead_mm = max(tol_mm * 2.0, 100.0)
 
         def target():
-            self._nav_to_waypoints([(x_mm, y_mm)], vel_mm, tol_mm)
+            self._nav_follow_purepursuit_path(
+                [(x_mm, y_mm)],
+                vel_mm,
+                lookahead_mm,
+                tol_mm,
+                2.0,
+            )
 
         return self._start_nav(target, blocking, timeout)
 
@@ -549,14 +606,175 @@ class Robot:
         dx: float,
         dy: float,
         velocity: float,
+        tolerance: float,
         blocking: bool = True,
-        tolerance: float = 15,
         timeout: float = None,
     ):
         """Navigate by (dx, dy) relative to current pose."""
         cur_x, cur_y, _ = self.get_pose()
         return self.move_to(cur_x + dx, cur_y + dy, velocity,
                             blocking=blocking, tolerance=tolerance, timeout=timeout)
+
+    def move_forward(
+        self,
+        distance: float,
+        velocity: float,
+        tolerance: float,
+        blocking: bool = True,
+        timeout: float = None,
+    ):
+        """
+        Navigate forward by distance along the robot's current heading.
+
+        distance and tolerance are in the current user unit system.
+        """
+        distance = self._require_positive_float("distance", distance)
+        return self._move_along_heading(
+            distance,
+            velocity,
+            tolerance=tolerance,
+            blocking=blocking,
+            timeout=timeout,
+        )
+
+    def move_backward(
+        self,
+        distance: float,
+        velocity: float,
+        tolerance: float,
+        blocking: bool = True,
+        timeout: float = None,
+    ):
+        """
+        Navigate backward by distance along the robot's current heading.
+
+        distance and tolerance are in the current user unit system.
+        """
+        distance = self._require_positive_float("distance", distance)
+        return self._move_along_heading(
+            -distance,
+            velocity,
+            tolerance=tolerance,
+            blocking=blocking,
+            timeout=timeout,
+        )
+
+    def _move_along_heading(
+        self,
+        signed_distance: float,
+        velocity: float,
+        tolerance: float,
+        blocking: bool = True,
+        timeout: float = None,
+    ):
+        """Internal helper: move along the current robot heading by signed_distance."""
+        cur_x, cur_y, cur_theta_deg = self.get_pose()
+        cur_theta_rad = math.radians(cur_theta_deg)
+        dx = math.cos(cur_theta_rad) * signed_distance
+        dy = math.sin(cur_theta_rad) * signed_distance
+        return self.move_to(
+            cur_x + dx,
+            cur_y + dy,
+            velocity,
+            tolerance=tolerance,
+            blocking=blocking,
+            timeout=timeout,
+        )
+
+    def purepursuit_follow_path(
+        self,
+        waypoints: list[tuple[float, float]],
+        velocity: float,
+        lookahead: float,
+        tolerance: float,
+        blocking: bool = True,
+        max_angular_rad_s: float = 1.0,
+        timeout: float = None,
+    ):
+        """
+        Follow an ordered waypoint path with pure pursuit.
+
+        waypoints           — [(x, y), ...] in the current user unit system
+        velocity            — maximum forward speed in user units/s
+        lookahead           — lookahead distance in user units
+        tolerance           — goal tolerance in user units
+        max_angular_rad_s   — angular-rate clamp in rad/s
+
+        blocking=True  → returns bool (True=finished, False=timeout)
+        blocking=False → returns MotionHandle
+        """
+        if not waypoints:
+            raise ValueError("waypoints must not be empty")
+
+        path_mm = [
+            (float(x) * self._unit.value, float(y) * self._unit.value)
+            for x, y in waypoints
+        ]
+        vel_mm = float(velocity) * self._unit.value
+        lookahead_mm = float(lookahead) * self._unit.value
+        tolerance_mm = float(tolerance) * self._unit.value
+        max_angular = float(max_angular_rad_s)
+
+        def target():
+            self._nav_follow_purepursuit_path(
+                path_mm,
+                vel_mm,
+                lookahead_mm,
+                tolerance_mm,
+                max_angular,
+            )
+
+        return self._start_nav(target, blocking, timeout)
+
+    def apf_follow_path(
+        self,
+        waypoints: list[tuple[float, float]],
+        velocity: float,
+        lookahead: float,
+        tolerance: float,
+        repulsion_range: float,
+        blocking: bool = True,
+        max_angular_rad_s: float = 1.0,
+        repulsion_gain: float = 500.0,
+        timeout: float = None,
+    ):
+        """
+        Follow an ordered waypoint path with artificial potential fields.
+
+        waypoints         — [(x, y), ...] in the current user unit system
+        velocity          — maximum forward speed in user units/s
+        lookahead         — attractive lookahead distance in user units
+        tolerance         — goal tolerance in user units
+        repulsion_range   — obstacle influence radius in user units
+
+        Obstacles come from set_obstacles() and/or set_obstacle_provider().
+        """
+        if not waypoints:
+            raise ValueError("waypoints must not be empty")
+
+        path_mm = [
+            (float(x) * self._unit.value, float(y) * self._unit.value)
+            for x, y in waypoints
+        ]
+        vel_mm = float(velocity) * self._unit.value
+        lookahead_mm = float(lookahead) * self._unit.value
+        tolerance_mm = float(tolerance) * self._unit.value
+        repulsion_range_mm = float(repulsion_range) * self._unit.value
+        max_angular = float(max_angular_rad_s)
+        repulsion_gain = float(repulsion_gain)
+
+        def target():
+            self._nav_follow_apf_path(
+                path_mm,
+                vel_mm,
+                lookahead_mm,
+                tolerance_mm,
+                repulsion_range_mm,
+                max_angular,
+                repulsion_gain,
+            )
+
+        return self._start_nav(target, blocking, timeout)
 
     def turn_to(
         self,
@@ -598,6 +816,8 @@ class Robot:
         self._nav_cancel.set()
         if self._nav_thread is not None:
             self._nav_thread.join(timeout=1.0)
+            if self._nav_thread.is_alive():
+                return
         self._nav_thread = None
         self._nav_cancel.clear()
 
@@ -1010,47 +1230,149 @@ class Robot:
     # =========================================================================
 
     def _start_nav(self, target_fn, blocking: bool, timeout: float):
-        """Cancel any active nav, start a new nav thread."""
-        self.cancel_motion()
+        """Start a new navigation thread. Only one base-motion command may run at a time."""
+        if self.is_moving():
+            raise RuntimeError("Another motion is still running")
+
         self._nav_done.clear()
         self._nav_cancel.clear()
-        self._nav_thread = threading.Thread(target=target_fn, daemon=True)
+
+        def runner() -> None:
+            try:
+                target_fn()
+            except Exception as exc:
+                self._node.get_logger().error(f"motion thread failed: {exc}")
+                try:
+                    self.stop()
+                except Exception:
+                    pass
+            finally:
+                self._nav_done.set()
+
+        self._nav_thread = threading.Thread(target=runner, daemon=True)
         self._nav_thread.start()
         if blocking:
             return self._nav_done.wait(timeout=timeout)
         return MotionHandle(self._nav_done, self._nav_cancel)
 
-    def _nav_to_waypoints(
+    def _nav_follow_purepursuit_path(
         self,
         waypoints_mm: list[tuple[float, float]],
         max_vel_mm: float,
+        lookahead_mm: float,
+        tolerance_mm: float,
+        max_angular_rad_s: float,
+        update_hz: float = float(DEFAULT_NAV_HZ),
+    ) -> None:
+        """Navigation thread body: pure-pursuit to an ordered list of waypoints (mm)."""
+        from robot.path_planner import PurePursuitPlanner
+
+        planner = PurePursuitPlanner(
+            lookahead_dist=lookahead_mm,
+            max_angular=max_angular_rad_s,
+            goal_tolerance=tolerance_mm,
+        )
+        self._nav_follow_path(
+            waypoints_mm,
+            planner,
+            max_vel_mm,
+            max(tolerance_mm, lookahead_mm),
+            tolerance_mm,
+            update_hz=update_hz,
+        )
+
+    def _nav_follow_apf_path(
+        self,
+        waypoints_mm: list[tuple[float, float]],
+        max_vel_mm: float,
+        lookahead_mm: float,
+        tolerance_mm: float,
+        repulsion_range_mm: float,
+        max_angular_rad_s: float,
+        repulsion_gain: float,
+        update_hz: float = float(DEFAULT_NAV_HZ),
+    ) -> None:
+        """Navigation thread body: APF path following with robot-frame obstacles."""
+        from robot.path_planner import APFPlanner
+
+        planner = APFPlanner(
+            lookahead_dist=lookahead_mm,
+            max_linear=max_vel_mm,
+            max_angular=max_angular_rad_s,
+            repulsion_gain=repulsion_gain,
+            repulsion_range=repulsion_range_mm,
+            goal_tolerance=tolerance_mm,
+            obstacle_provider=self._get_obstacles_mm,
+        )
+        self._nav_follow_path(
+            waypoints_mm,
+            planner,
+            max_vel_mm,
+            max(tolerance_mm, lookahead_mm),
+            tolerance_mm,
+            update_hz=update_hz,
+        )
+
+    def _nav_follow_path(
+        self,
+        waypoints_mm: list[tuple[float, float]],
+        planner,
+        max_vel_mm: float,
+        advance_radius_mm: float,
         tolerance_mm: float,
         update_hz: float = float(DEFAULT_NAV_HZ),
     ) -> None:
-        """Navigation thread body: pure-pursuit to a list of waypoints (mm)."""
-        from robot.path_planner import PurePursuitPlanner
-        planner = PurePursuitPlanner(lookahead_dist=max(tolerance_mm * 2, 100))
+        """Shared path-following loop for pure pursuit and APF planners."""
+        remaining_path = list(waypoints_mm)
         dt = 1.0 / update_hz
 
         while not self._nav_cancel.is_set():
-            x, y, theta_rad = self._get_pose_mm()
+            x_mm, y_mm, theta_rad = self._get_pose_mm()
+            remaining_path = self._advance_remaining_path(
+                remaining_path,
+                x_mm,
+                y_mm,
+                advance_radius_mm,
+            )
 
-            # Remove waypoints already within tolerance
-            while waypoints_mm and _dist2d(x, y, *waypoints_mm[0]) < tolerance_mm:
-                waypoints_mm.pop(0)
-
-            if not waypoints_mm:
+            goal_x_mm, goal_y_mm = remaining_path[0]
+            if len(remaining_path) == 1 and _dist2d(x_mm, y_mm, goal_x_mm, goal_y_mm) <= tolerance_mm:
                 self.stop()
-                self._nav_done.set()
                 return
 
-            linear_mm, angular_rad = planner.compute_velocity(
-                (x, y, theta_rad), waypoints_mm, max_vel_mm
+            linear_mm, angular_rad_s = planner.compute_velocity(
+                (x_mm, y_mm, theta_rad),
+                remaining_path,
+                max_vel_mm,
             )
-            self._send_body_velocity_mm(linear_mm, angular_rad)
-            time.sleep(dt)
+            self._send_body_velocity_mm(linear_mm, angular_rad_s)
+            if not self._sleep_with_cancel(dt):
+                break
 
         self.stop()
+
+    @staticmethod
+    def _advance_remaining_path(
+        remaining_path: list[tuple[float, float]],
+        x_mm: float,
+        y_mm: float,
+        advance_radius_mm: float,
+    ) -> list[tuple[float, float]]:
+        """
+        Advance path progress in route order.
+
+        Intermediate waypoints are dropped once the robot gets within the
+        advance radius of the current front waypoint. The final waypoint is
+        never dropped here; completion is handled separately so looped or
+        overlapping paths do not finish early just because the robot passes
+        near the final goal before traversing the whole route.
+        """
+        while len(remaining_path) > 1:
+            next_x_mm, next_y_mm = remaining_path[0]
+            if _dist2d(x_mm, y_mm, next_x_mm, next_y_mm) > advance_radius_mm:
+                break
+            remaining_path.pop(0)
+        return remaining_path
 
     def _turn_to_heading(
         self,
@@ -1066,12 +1388,20 @@ class Robot:
             error = _wrap_angle(target_rad - theta_rad)
             if abs(error) < tolerance_rad:
                 self.stop()
-                self._nav_done.set()
                 return
             angular = max(-max_angular_rad, min(max_angular_rad, error * 3.0))
             self._send_body_velocity_mm(0.0, angular)
-            time.sleep(dt)
+            if not self._sleep_with_cancel(dt):
+                break
         self.stop()
+
+    def _sleep_with_cancel(self, seconds: float) -> bool:
+        """
+        Wait for up to seconds, but wake early if the active base motion is cancelled.
+
+        Returns True when the full interval elapsed, False when cancel was requested.
+        """
+        return not self._nav_cancel.wait(timeout=seconds)
 
     # =========================================================================
     # Internal — blocking waits for actuator completion
@@ -1127,6 +1457,28 @@ class Robot:
         """Return (x_mm, y_mm, theta_rad) without unit conversion."""
         with self._lock:
             return self._pose
+
+    def _get_obstacles_mm(self) -> list[tuple[float, float]]:
+        """Return cached and provider-supplied APF obstacles in robot-frame millimeters."""
+        with self._lock:
+            cached = list(self._obstacles_mm)
+            provider = self._obstacle_provider
+
+        dynamic: list[tuple[float, float]] = []
+        if provider is not None:
+            try:
+                provided = provider() or []
+                dynamic = [
+                    (
+                        self._require_finite_float("obstacle_x_mm", obs_x),
+                        self._require_finite_float("obstacle_y_mm", obs_y),
+                    )
+                    for obs_x, obs_y in provided
+                ]
+            except Exception as exc:
+                self._node.get_logger().error(f"obstacle provider failed: {exc}")
+
+        return cached + dynamic
 
     @staticmethod
     def _require_id(name: str, value: int, low: int, high: int) -> int:
