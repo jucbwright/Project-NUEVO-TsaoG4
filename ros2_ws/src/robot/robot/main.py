@@ -41,8 +41,8 @@ def configure_robot(robot: Robot) -> None:
     """Apply the user unit plus robot-specific wheel mapping and odometry settings."""
     robot.set_unit(POSITION_UNIT)
     robot.set_odometry_parameters(
-        wheel_diameter_mm=WHEEL_DIAMETER,
-        wheel_base_mm=WHEEL_BASE,
+        wheel_diameter=WHEEL_DIAMETER,
+        wheel_base=WHEEL_BASE,
         initial_theta_deg=INITIAL_THETA_DEG,
         left_motor_id=LEFT_WHEEL_MOTOR,
         left_motor_dir_inverted=LEFT_WHEEL_DIR_INVERTED,
