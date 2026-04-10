@@ -1,13 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Dockerfile.jetson — Global GPS stack for the Jetson Nano
+# Dockerfile.jetson — Global GPS stack for the Jetson Orin NX / Orin Nano
 #
 # Target:  Jetson Orin NX / Orin Nano running JetPack 6.x (host: Ubuntu 22.04, arm64)
 #          The container itself uses Ubuntu 24.04 (Noble) via ros:jazzy-ros-base.
 # ROS2:    Jazzy Jalisco
 #
-# For JetPack 5.x (Ubuntu 20.04) replace the base image with:
-#   FROM ros:humble-ros-base
-# and adjust any ros-jazzy-* apt packages to ros-humble-*.
+# Note: librealsense2 and realsense2_camera are packaged inside the ROS2 Jazzy
+# apt repo as ros-jazzy-librealsense2 and ros-jazzy-realsense2-camera.
+# No separate Intel apt repo is needed.
 #
 # Build context: Project-NUEVO/ repository root
 #   docker compose -f ros2_ws/docker/docker-compose.jetson.yml build
@@ -20,17 +20,6 @@ ENV ROS_DISTRO=jazzy
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# ── Intel RealSense apt repository ───────────────────────────────────────────
-# librealsense2 is not in Ubuntu's standard repos — add Intel's repo first.
-# ros:jazzy-ros-base is Ubuntu 24.04 (Noble).
-RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
-    && curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp \
-        | gpg --dearmor -o /usr/share/keyrings/librealsense-archive-keyring.gpg \
-    && echo "deb [arch=arm64 signed-by=/usr/share/keyrings/librealsense-archive-keyring.gpg] \
-        https://librealsense.intel.com/Debian/apt-repo jammy main" \
-        > /etc/apt/sources.list.d/librealsense.list \
-    && rm -rf /var/lib/apt/lists/*
-
 # ── Core system packages ──────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
@@ -38,11 +27,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-rosdep \
         # OpenCV with ArUco support
         python3-opencv \
-        # cv_bridge ROS package
+        # cv_bridge and message_filters
         ros-jazzy-cv-bridge \
-        # message_filters (ApproximateTimeSynchronizer)
         ros-jazzy-message-filters \
-        # RealSense ROS2 camera driver + SDK (librealsense2 pulled as dependency)
+        # Intel RealSense SDK — bundled in the ROS2 Jazzy apt repo
+        ros-jazzy-librealsense2 \
+        # RealSense ROS2 camera driver
         ros-jazzy-realsense2-camera \
         ros-jazzy-realsense2-description \
     && rm -rf /var/lib/apt/lists/*
