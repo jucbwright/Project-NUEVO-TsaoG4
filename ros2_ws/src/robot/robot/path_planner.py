@@ -271,6 +271,9 @@ class DWAPlanner():
         min_dist /= 1000
         # return 1.0 / (min_dist + ttc * self.ttc_weight + 1e-5), min_dist # cost is inversely proportional to the minimum distance to obstacles
         sigma = 0.1
+        # BUG (uninitialized ttc): ttc is only assigned inside `if np.min(dists) < min_dist`.
+        # If traj is empty (predict_time=0 or dt=0 at startup), the loop never runs and
+        # ttc is undefined here → UnboundLocalError.  Fix: initialize ttc = 0.0 before the loop.
         return np.exp(- ((min_dist + ttc * self.ttc_weight) ** 2) / (2 * sigma ** 2)), min_dist # Gaussian obstacle cost
 
     def calc_path_cost(self, traj, path):
@@ -311,6 +314,16 @@ class DWAPlanner():
             # transform obstacles from robot frame to world frame.
             obstacles = (np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]) @ obstacles.T).T + np.array([[x, y],])
             obstacles = obstacles[np.linalg.norm(obstacles-np.float64([[x, y]]), axis=1)<self.obstacles_range,:]
+            # BUG (initial best_cost = inf): only an upper-bound filter is applied here.
+            # Lidar points on the robot's own body (arm, chassis) survive this filter and land
+            # within robot_radius of the robot center.  calc_obstacle_cost then returns inf for
+            # every predicted trajectory because the robot "starts inside" those points, so all
+            # (v, w) samples get cost=inf and best_cost remains float('inf') — especially bad on
+            # the very first call when the dynamic window is narrow (velocity=0).
+            # Fix: also filter obstacles closer than robot_radius, i.e.:
+            #   dist = np.linalg.norm(obstacles - [[x,y]], axis=1)
+            #   obstacles = obstacles[(dist >= robot_radius) & (dist < obstacles_range)]
+            # The same self-detection problem affects pure_velocity_search (the blocked fallback).
         vx, vy, w = velocity
 
         if self.TargetReached(path, x, y):

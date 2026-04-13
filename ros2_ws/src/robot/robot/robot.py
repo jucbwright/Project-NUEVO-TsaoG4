@@ -374,6 +374,12 @@ class Robot:
         )
 
     def _on_lidar(self, msg: LaserScan) -> None:
+        # BUG (float-step size mismatch): np.arange with a float step can produce
+        # len(angles) = N or N±1 vs len(msg.ranges) due to floating-point rounding of
+        # (angle_max - angle_min) / angle_increment.  Applying the `valid` mask (sized
+        # to ranges) to a differently-sized angles array silently misaligns angle↔range
+        # pairs or raises an IndexError.
+        # Fix: use  msg.angle_min + np.arange(len(msg.ranges)) * msg.angle_increment
         angles = np.arange(msg.angle_min, msg.angle_max + msg.angle_increment, msg.angle_increment)
         ranges = np.array(msg.ranges)
 
@@ -1633,6 +1639,11 @@ class Robot:
         )
 
     def _nav_follow_path_loop(self, path, period: float):
+        # BUG (missing lock): self._obstacles_mm, self._pose, and self._vel are all
+        # written by ROS callbacks under self._lock.  Reading them here without the lock
+        # gives an inconsistent snapshot — e.g. pose from one kinematics tick and vel
+        # from the next — and races with _on_lidar replacing _obstacles_mm mid-copy.
+        # Fix: acquire self._lock once to snapshot all three before this line.
         obstacles = self._obstacles_mm.copy()
         v, w = self.planner.compute_velocity(path, self._pose, self._vel, obstacles, period)
         # print(f"Computed velocity: linear={v:.1f} mm/s, angular={math.degrees(w):.1f} deg/s")
@@ -1647,7 +1658,9 @@ class Robot:
         return "MOVING"
 
     def _draw_lidar_obstacles(self):
-        
+        # BUG (missing lock): self._obstacles_mm and self._pose are read below without
+        # holding self._lock, racing with _on_lidar and _on_kinematics callbacks.
+        # Fix: snapshot both under self._lock before the plt calls.
         plt.ion()
         self.fig, self.ax = plt.subplots()
         self.ax.clear()
