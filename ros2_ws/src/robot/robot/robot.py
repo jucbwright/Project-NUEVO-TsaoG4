@@ -7,6 +7,7 @@ import threading
 from enum import Enum, IntEnum
 
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -261,16 +262,15 @@ class Robot:
         node.create_subscription(IOInputState,     '/io_input_state',    self._on_io_input,    10)
         node.create_subscription(IOOutputState,    '/io_output_state',   self._on_io_output,   10)
         node.create_subscription(SysOdomParamRsp,  '/sys_odom_param_rsp', self._on_odom_param_rsp, 10)
-        # QoS NOTE: the integer `10` creates QoSProfile(depth=10, reliability=RELIABLE).
-        # rplidar_node also publishes RELIABLE so the connection is made, but depth=10
-        # lets up to 10 stale scans queue in DDS when the spin thread is delayed.
-        # The callback then fires on the oldest queued scan, making obstacle data stale.
-        # Fix: use BEST_EFFORT + depth=1 (SensorDataQoS) so only the latest scan is kept:
-        #   from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-        #   _LIDAR_QOS = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
-        #                           history=HistoryPolicy.KEEP_LAST, depth=1)
-        # RELIABLE publisher + BEST_EFFORT subscriber is a valid pairing in ROS2.
-        node.create_subscription(LaserScan,         '/scan',              self._on_lidar,          10)
+        # BEST_EFFORT + depth=1: only the newest scan is kept in the DDS queue.
+        # Previously depth=10 RELIABLE allowed up to 10 stale scans to accumulate
+        # when the spin thread was delayed (e.g. during DWA trajectory search),
+        # causing _on_lidar to fire on old data and the robot to miss obstacles.
+        # RELIABLE publisher (rplidar_node) + BEST_EFFORT subscriber is a valid
+        # ROS2 QoS pairing — publisher offers more than subscriber requires.
+        node.create_subscription(LaserScan,         '/scan',              self._on_lidar,
+                                 QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                                            history=HistoryPolicy.KEEP_LAST, depth=1))
 
         # ── Service clients ───────────────────────────────────────────────────
         self._set_state_client = node.create_client(SetFirmwareState, '/set_firmware_state')
