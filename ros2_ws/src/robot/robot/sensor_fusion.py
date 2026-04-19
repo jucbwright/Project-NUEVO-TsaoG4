@@ -31,6 +31,8 @@ def _wrap(angle: float) -> float:
 
 class SensorFusion:
     """Abstract base for all sensor fusion strategies."""
+    def __init__(self):
+        self.measurement_type = None  # "orientation" or "position"
 
     def update(self, *args, **kwargs):
         """Return fused estimate. Subclasses define the exact signature."""
@@ -58,7 +60,9 @@ class OrientationComplementaryFilter(SensorFusion):
     """
 
     def __init__(self, alpha: float = 0.0) -> None:
+        super().__init__()
         self.alpha = max(0.0, min(1.0, float(alpha)))
+        self.measurement_type = "orientation"
 
     def update(
         self,
@@ -96,12 +100,14 @@ class PositionComplementaryFilter(SensorFusion):
     """
 
     def __init__(self, alpha: float = 0.10) -> None:
+        super().__init__()
         self.alpha = max(0.0, min(1.0, float(alpha)))
         self._anchor_x_mm      = 0.0
         self._anchor_y_mm      = 0.0
         self._odom_x_at_anchor = 0.0
         self._odom_y_at_anchor = 0.0
         self._anchor_valid     = False
+        self.measurement_type = "position"
 
     def reset(self) -> None:
         """Clear anchor — call when odometry is reset."""

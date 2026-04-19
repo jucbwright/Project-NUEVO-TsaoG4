@@ -171,6 +171,8 @@ class Robot:
     DEFAULT_RIGHT_WHEEL_MOTOR: int = int(Motor.DC_M2)
     DEFAULT_LEFT_WHEEL_DIR_INVERTED: bool = False
     DEFAULT_RIGHT_WHEEL_DIR_INVERTED: bool = True
+    POSITION_ALPHA = 0.10  # complementary filter GPS weight for position fusion
+    ORIENTATION_ALPHA = 0.0  # complementary filter IMU weight for orientation fusion (IMU is not working well, so default to pure odometry for now)
 
     # Servo pulse range (standard hobby servo)
     _SERVO_MIN_US: int = 1000
@@ -215,7 +217,7 @@ class Robot:
         self._ahrs_heading:        float | None = None   # absolute heading from AHRS (rad)
         self._odom_reset_pending:  bool       = False  # True between reset_odometry() call and firmware-confirmed reset tick
         self._fused_theta:        float      = math.radians(self.INITIAL_THETA_DEG)  # fusion strategy output (rad)
-        self._fusion: SensorFusion           = OrientationComplementaryFilter(alpha=0.02)
+        self._orientation_fusion:  OrientationComplementaryFilter          = OrientationComplementaryFilter(alpha=self.ORIENTATION_ALPHA)
         self._pose:    tuple = (0.0, 0.0, 0.0)  # x_mm, y_mm, theta_rad (raw odometry)
         # ── GPS position fusion ───────────────────────────────────────────────
         self._tracked_tag_id:    int         = -1    # tag to track (-1 = any)
@@ -229,7 +231,7 @@ class Robot:
         self._tag_body_offset_y_mm: float    = 0.0   # tag position in robot body frame y (mm, left)
         self._fused_x_mm:        float       = 0.0   # complementary-filter x output (mm)
         self._fused_y_mm:        float       = 0.0   # complementary-filter y output (mm)
-        self._pos_fusion:        PositionComplementaryFilter = PositionComplementaryFilter(alpha=0.10)
+        self._pos_fusion:        PositionComplementaryFilter = PositionComplementaryFilter(alpha=self.POSITION_ALPHA)
         self._vel:     tuple = (0.0, 0.0, 0.0)  # vx_mm_s, vy_mm_s, vtheta_rad_s
         self._buttons: int   = 0
         self._limits:  int   = 0
@@ -403,7 +405,7 @@ class Robot:
                 relative_ahrs = None
             linear_vel  = math.hypot(float(msg.vx), float(msg.vy))
             angular_vel = float(msg.v_theta)
-            self._fused_theta = self._fusion.update(
+            self._fused_theta = self._orientation_fusion.update(
                 odom_theta  = msg.theta,
                 mag_heading = relative_ahrs,
                 linear_vel  = linear_vel,
@@ -1530,7 +1532,7 @@ class Robot:
 
         Blends the absolute AHRS heading (corrects long-term drift) with
         the odometry theta (smooth, short-term accurate). The filter weight
-        ``_fusion_alpha`` (default 0.02) controls how quickly the AHRS
+        ``_orientation_fusion_alpha`` (default 0.02) controls how quickly the AHRS
         heading pulls the estimate; it only activates once the firmware reports
         ``mag_calibrated = True``. Before calibration, returns odometry theta.
         """
@@ -1541,12 +1543,13 @@ class Robot:
         """
         Replace the active heading-fusion strategy.
 
-        Any SensorFusion subclass is accepted (OrientationComplementaryFilter,
-        AdaptiveComplementaryFilter, HeadingKalmanFilter, or a custom class).
+        Any SensorFusion subclass is accepted 
         The new strategy takes effect on the next kinematics update.
         """
+        if strategy.measurement_type != "orientation":
+            raise ValueError(f"Orientation fusion strategy must have measurement_type='orientation', but got '{strategy.measurement_type}'")
         with self._lock:
-            self._fusion = strategy
+            self._orientation_fusion = strategy
 
     def set_orientation_fusion_alpha(self, alpha: float) -> None:
         """
@@ -1561,14 +1564,14 @@ class Robot:
         Default is 0.02.
         """
         with self._lock:
-            if not isinstance(self._fusion, OrientationComplementaryFilter):
+            if not isinstance(self._orientation_fusion, OrientationComplementaryFilter):
                 raise TypeError(
                     f"set_orientation_fusion_alpha() requires the active strategy to be "
                     f"OrientationComplementaryFilter, but it is "
                     f"{type(self._fusion).__name__}. "
                     "Use set_orientation_fusion_strategy(OrientationComplementaryFilter(alpha)) instead."
                 )
-            self._fusion.alpha = max(0.0, min(1.0, float(alpha)))
+            self._orientation_fusion.alpha = max(0.0, min(1.0, float(alpha)))
 
     def set_imu_z_down(self, z_down: bool) -> None:
         """
@@ -1650,6 +1653,18 @@ class Robot:
             self._tag_body_offset_x_mm = float(forward_mm)
             self._tag_body_offset_y_mm = float(left_mm)
 
+    def set_position_fusion_strategy(self, strategy: SensorFusion) -> None:
+        """
+        Replace the active position-fusion strategy.
+
+        Any SensorFusion subclass is accepted 
+        The new strategy takes effect on the next kinematics update.
+        """
+        if strategy.measurement_type != "position":
+            raise ValueError(f"Position fusion strategy must have measurement_type='position', but got '{strategy.measurement_type}'")
+        with self._lock:
+            self._pos_fusion = strategy
+    
     def set_position_fusion_alpha(self, alpha: float) -> None:
         """
         Set the GPS weight for position fusion (0.0–1.0).
