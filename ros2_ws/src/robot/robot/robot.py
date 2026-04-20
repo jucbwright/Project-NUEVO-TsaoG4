@@ -1681,8 +1681,14 @@ class Robot:
         goal_tolerance: float,
         obstacles_range: float,
         safe_dist: float,
-        sharp_angle: float,
-        alpha: float,
+        max_turning_angle: float,
+        avoidance_delay: int,
+        obstacle_buffer_len: int,
+        obstacle_buffer_delay: int,
+        alpha_Ld: float,
+        alpha_Sd: float,
+        alpha_angle: float,
+        obstacle_avoidance: bool = True,
     ) -> None:
 
         from robot.path_planner import PurePursuitPlannerWithAvoidance
@@ -1693,8 +1699,14 @@ class Robot:
             goal_tolerance=goal_tolerance,
             obstacles_range=obstacles_range,
             safe_dist=safe_dist,
-            sharp_angle=sharp_angle,
-            alpha=alpha,
+            max_turning_angle=max_turning_angle,
+            avoidance_delay=avoidance_delay,
+            obstacle_buffer_len=obstacle_buffer_len,
+            obstacle_buffer_delay=obstacle_buffer_delay,
+            alpha_Ld=alpha_Ld,
+            alpha_Sd=alpha_Sd,
+            alpha_angle=alpha_angle,
+            obstacle_avoidance=obstacle_avoidance,
         )
     
     def _set_pp_path(self, path):

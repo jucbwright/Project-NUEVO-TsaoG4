@@ -84,25 +84,22 @@ def run(robot: Robot) -> None:
                 (0.0, 2500.0),
                 (700.0, 2500.0),
             ]
-            path = densify_polyline(path_control_points, spacing=500.0)
-
-            robot._nav_follow_pp_path(
-                lookahead_distance=100.0,
-                max_linear_speed=130.0,
-                max_angular_speed=1.5,
-                goal_tolerance=20.0,
-                obstacles_range=450.0,
-                safe_dist=200.0,
-                max_turning_angle=math.pi/4,
-                avoidance_delay=100,
-                obstacle_buffer_len=2,
-                obstacle_buffer_delay=200,
-                alpha_Ld=0.3,
-                alpha_Sd=1.5,
-                alpha_angle=0.8,
-                obstacle_avoidance=True,
+            path = np.float64(densify_polyline(path_control_points, spacing=500.0))
+            robot._nav_follow_dwa_path(
+                max_vel_mm=200.0,
+                max_acc_mm=300.0,
+                max_angular_rad=1.5,
+                max_angular_acc_rad=2.0,
+                lookahead_mm=200.0,
+                advance_radius_mm=150.0,
+                tolerance_mm=100.0,
+                gains_of_costs=[2.0, 0.02, 1.0, 0.3, 0.1], # [gain_goal, gain_heading, gain_obs_base, gain_speed, gain_path]
+                period=period,
+                predict_time=3.0,
+                predict_velocity_samples_resolution=[10.0, 0.1],
+                obstacles_range_mm=1000.0,
+                ttc_weight=0.1,
             )
-            robot._set_pp_path(path)
             print("Path is ready, Entering IDLE state.")
             state = "IDLE"
 
@@ -120,7 +117,7 @@ def run(robot: Robot) -> None:
             # if next_tick % 0.5 < period: # print every half second
             #     robot._draw_lidar_obstacles()
             #     print("Obstacle figure updated.")
-            state = robot._nav_follow_pp_path_loop()
+            state = robot._nav_follow_path_loop(path, period)
 
         # FSM refresh rate control
         next_tick += period

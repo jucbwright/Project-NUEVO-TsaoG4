@@ -144,13 +144,19 @@ class PurePursuitPlanner(PathPlanner):
 class PurePursuitPlannerWithAvoidance(PathPlanner):
     def __init__(self,
             lookahead_distance: float=100.0,
-            max_linear_speed: float=100.0,
-            max_angular_speed: float=2.5,
+            max_linear_speed: float=130.0,
+            max_angular_speed: float=1.0,
             goal_tolerance: float=20.0,
-            obstacles_range: float=300.0,
+            obstacles_range: float=400.0,
             safe_dist: float=200.0,
-            sharp_angle: float=np.pi/2,
-            alpha: float=0.8):
+            max_turning_angle: float=np.pi/4,
+            avoidance_delay: int=100,
+            obstacle_buffer_len: int=2,
+            obstacle_buffer_delay: int=400,
+            alpha_Ld: float=0.5,
+            alpha_Sd: float=1.5,
+            alpha_angle: float=0.75,
+            obstacle_avoidance: bool = True,):
         self.Ld = lookahead_distance
         self.raw_LD = lookahead_distance
         self.v_max = max_linear_speed  # mm/s
@@ -158,13 +164,18 @@ class PurePursuitPlannerWithAvoidance(PathPlanner):
         self.goal_tolerance = goal_tolerance
         self.obstacles_range = obstacles_range
         self.safe_dist = safe_dist
-        self.sharp_angle = sharp_angle
-        self.alpha = alpha
-        self.avoidance_active = False
+        self.max_turning_angle = max_turning_angle
+        self.alpha_Ld = alpha_Ld
+        self.alpha_Sd = alpha_Sd
+        self.alpha_angle = alpha_angle
+        self.obstacle_avoidance = obstacle_avoidance
 
+        self.avoidance_active = False
         self.avoidance_counter = 0
-        self.obstacle_buffer = deque(maxlen=2)
-        self.obstacle_buffer_counter = deque(maxlen=2)
+        self.avoidance_delay = avoidance_delay
+        self.obstacle_buffer = deque(maxlen=obstacle_buffer_len)
+        self.obstacle_buffer_counter = deque(maxlen=obstacle_buffer_len)
+        self.obstacle_buffer_delay = obstacle_buffer_delay
 
     def set_path(self, path: list[tuple[float, float]]):
         self.remaining_path = path.copy()
@@ -206,14 +217,8 @@ class PurePursuitPlannerWithAvoidance(PathPlanner):
         dist_to_goal = np.hypot(goal_x - x, goal_y - y)
         return (dist_to_goal < self.goal_tolerance)
 
-    def compute_velocity(self, pose, obstacles_r: np.nparray):
-        # Note that the input obstacle point cloud is in robot frame
+    def gen_obstacle_waypoint(self, pose, obstacles_r):
         x, y, theta = pose
-        self._advance_remaining_path(x,y)
-        
-        if self.TargetReached(self.remaining_path,x,y):
-            return 0.0, 0.0  # Stop if within goal tolerance
-
         if len(obstacles_r) > 0:
             # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly
             # there is a distance between the lidar and the robot center.
@@ -223,7 +228,7 @@ class PurePursuitPlannerWithAvoidance(PathPlanner):
             # obstacles_r = obstacles_r[obstacles_r[:,0]>0]
             # obstacles_r = obstacles_r[(obstacles_r[:,0]>0) & (np.abs(obstacles_r[:,1])<self.safe_dist),:]
             obstacles_r = obstacles_r[np.abs(np.arctan2(obstacles_r[:,1],obstacles_r[:,0])) <= np.pi/2,:] # only consider obstacles in front of the robot within 180 deg FOV, which can help prevent the robot from being too conservative by reacting to obstacles behind it that are not in its path.
-        
+
         # Recall previous obstacles
         if len(self.obstacle_buffer)>0:
             buffer_r = np.float64(list(self.obstacle_buffer))-np.float64([[x, y]])
@@ -263,71 +268,79 @@ class PurePursuitPlannerWithAvoidance(PathPlanner):
                 elif np.linalg.norm(temp - np.array(list(self.obstacle_buffer)[0])) > 1e-3:
                     self.obstacle_buffer.append(temp)
                     self.obstacle_buffer_counter.append(0)
-
-                angle = np.arctan2(closest_pt[1],closest_pt[0]) + theta # angle of the obstacle in world frame
-                if min_dist < self.safe_dist:
-                    delta_angle = self.sharp_angle # turn sharply if the robot is close to the obstacle
-                else:
-                    # delta_angle = 2*np.abs(np.arctan2(self.safe_dist/2, np.sqrt(min_dist**2 - (self.safe_dist/2)**2)))
-                    delta_angle = self.sharp_angle * 0.75
-                # when the obstacle is behind the robot, consider 2 candidates in almost different directions.
-                if np.abs(np.arctan2(closest_pt[1],closest_pt[0])) > np.pi/4:# and np.abs(np.arctan2(closest_pt[1],closest_pt[0])) < 3*np.pi/4:
-                    delta_angle = np.pi/2
-                    # delta_angle = min(2*delta_angle, np.pi/2)
-                # elif np.abs(np.arctan2(closest_pt[1],closest_pt[0])) >= 2*np.pi/4:
-                #     delta_angle = np.abs(np.arctan2(closest_pt[1],closest_pt[0]))
-
-                # find the closest waypoint on the desired path
-                target = self.raw_path[-1]
-                for i in range(len(self.remaining_path)):
-                    if self.remaining_path[i] in self.raw_path:
-                        target = self.remaining_path[i]
-                        # target = self.remaining_path[i+1] if (i+1)<len(self.remaining_path) else self.remaining_path[i]
-                        break
                 
-                # avoid_dist = min_dist
-                avoid_dist = max(min_dist, self.safe_dist * 2.0)
-                # Two candidate waypoints in +- orientations
-                candidate_waypoint1 = (x+avoid_dist*np.cos(angle+delta_angle), y+avoid_dist*np.sin(angle+delta_angle)) # left turn
-                candidate_waypoint2 = (x+avoid_dist*np.cos(angle-delta_angle), y+avoid_dist*np.sin(angle-delta_angle)) # left right
-
                 # In avoidance mode, we should romove the previous added waypoint
                 if self.avoidance_active:
                     self.remaining_path.pop(0)
 
-                # find the candidate waypoints which is close to the desired path.
-                if np.hypot(target[0]-candidate_waypoint1[0], target[1]-candidate_waypoint1[1]) < np.hypot(target[0]-candidate_waypoint2[0], target[1]-candidate_waypoint2[1]):
-                    self.remaining_path.insert(0, candidate_waypoint1)
-                    print("1:", delta_angle, candidate_waypoint1, pose, target)
-                    self.avoidance_active = True
+                angle = np.arctan2(closest_pt[1],closest_pt[0]) + theta # angle of the obstacle in world frame
+                if min_dist < self.safe_dist:
+                    delta_angle = self.max_turning_angle # turn sharply if the robot is close to the obstacle
                 else:
-                    self.remaining_path.insert(0, candidate_waypoint2)
-                    print("2:", delta_angle, candidate_waypoint2, pose, target)
+                    # delta_angle = 2*np.abs(np.arctan2(self.safe_dist/2, np.sqrt(min_dist**2 - (self.safe_dist/2)**2)))
+                    delta_angle = self.max_turning_angle * self.alpha_angle
+                
+                # when the obstacle is behind the robot, consider 2 candidates in opposite directions.
+                if np.abs(np.arctan2(closest_pt[1],closest_pt[0])) > np.pi/2 and np.hypot(closest_pt[0], closest_pt[1]) > (self.safe_dist+self.obstacles_range)/2:
+                    delta_angle = 0
+                if np.abs(np.arctan2(closest_pt[1],closest_pt[0])) > np.pi/3:# and np.abs(np.arctan2(closest_pt[1],closest_pt[0])) < 3*np.pi/4:
+                    # delta_angle = np.pi/2
+                    # delta_angle = np.abs(np.arctan2(closest_pt[1],closest_pt[0]))
+                    delta_angle = min(np.abs(np.arctan2(closest_pt[1],closest_pt[0])), np.pi)
+                    # delta_angle = min(max(np.pi/2,np.abs(np.arctan2(closest_pt[1],closest_pt[0]))), np.pi)
+
+                if delta_angle > 1e-3:
+                    # find the closest waypoint on the desired path
+                    target = self.raw_path[-1]
+                    for i in range(len(self.remaining_path)):
+                        if self.remaining_path[i] in self.raw_path:
+                            target = self.remaining_path[i]
+                            # target = self.remaining_path[i+1] if (i+1)<len(self.remaining_path) else self.remaining_path[i]
+                            break
+                    
+                    # decide the distance between robot and added waypoint
+                    avoid_dist = max(min_dist, self.safe_dist * self.alpha_Sd)
+                    # Two candidate waypoints in +- orientations
+                    candidate_waypoint1 = (x+avoid_dist*np.cos(angle+delta_angle), y+avoid_dist*np.sin(angle+delta_angle)) # left turn
+                    candidate_waypoint2 = (x+avoid_dist*np.cos(angle-delta_angle), y+avoid_dist*np.sin(angle-delta_angle)) # left right
+
+                    # find the candidate waypoints which is close to the desired path.
+                    if np.hypot(target[0]-candidate_waypoint1[0], target[1]-candidate_waypoint1[1]) < np.hypot(target[0]-candidate_waypoint2[0], target[1]-candidate_waypoint2[1]):
+                        self.remaining_path.insert(0, candidate_waypoint1)
+                        print(delta_angle, closest_pt, candidate_waypoint1, pose)
+                    else:
+                        self.remaining_path.insert(0, candidate_waypoint2)
+                        print(delta_angle, closest_pt, candidate_waypoint2, pose)
+                        
+                    print(self.obstacle_buffer)
+                    # reduce lookahead distance to track added waypoints more precisely.
+                    self.Ld = self.raw_LD * self.alpha_Ld
+
+                    # keep avoidance active for a few cycles to ensure the robot reacts to the obstacle.
+                    self.avoidance_counter = self.avoidance_delay
                     self.avoidance_active = True
-                print("buffer:", list(self.obstacle_buffer), list(self.obstacle_buffer_counter))
-                print("Remaining path:", list(self.remaining_path))
-
-                # self.Ld = max(self.raw_LD * 0.3, 50.0)
-                self.Ld = self.raw_LD * self.alpha # reduce lookahead distance to track added waypoints more precisely.
-
-                self.avoidance_counter = 100 # keep avoidance active for a few cycles to ensure the robot reacts to the obstacle.
-            # else:
-            #     self.avoidance_counter -= 1
-        # else:
-        #     self.Ld = self.raw_LD
-        #     self.avoidance_active = False
-        #     self.avoidance_counter = 0
 
         if self.avoidance_counter > 0:
             self.avoidance_counter -= 1
-            # print(f"Avoidance active, counter: {self.avoidance_counter}")
         
+        # keep the obstacle in buffer for a few cycles after it disappears from lidar to prevent the robot from totally ignoring the obstacle it left behind, so the back wheel won't touch the obstacle.
         if len(self.obstacle_buffer) > 0:
-            if self.obstacle_buffer_counter[0] > 400: # keep the obstacle in buffer for a few cycles after it disappears from lidar to prevent the robot from switching back and forth between avoidance and non-avoidance modes due to temporary loss of obstacle detection, which can cause unstable behavior. The exact number of cycles can be tuned based on the expected frequency of obstacle detection and the robot's speed.
+            if self.obstacle_buffer_counter[0] > self.obstacle_buffer_delay:
                 self.obstacle_buffer_counter.popleft()
                 self.obstacle_buffer.popleft()
             for i in range(len(self.obstacle_buffer_counter)):
                 self.obstacle_buffer_counter[i] += 1
+
+    def compute_velocity(self, pose, obstacles_r: np.nparray):
+        # Note that the input obstacle point cloud is in robot frame
+        x, y, theta = pose
+        self._advance_remaining_path(x,y)
+        
+        if self.TargetReached(self.remaining_path,x,y):
+            return 0.0, 0.0  # Stop if within goal tolerance
+
+        if self.obstacle_avoidance:
+            self.gen_obstacle_waypoint(pose, obstacles_r)
 
         target = self._lookahead_point(self.remaining_path, x, y)
         tx, ty = target
