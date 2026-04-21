@@ -1,16 +1,3 @@
-"""
-obstacle_avoidance.py — DWA-based obstacle avoidance example
-=============================================================
-Restored from commit 8894254 (added obstacle avoidance).
-
-Known issues (do not fix here — see comments):
-  - robot._nav_follow_dwa_path() passes mm values to a planner that expects SI units.
-  - robot._nav_follow_path_loop() passes an extra `period` argument that DWAPlanner
-    does not accept; will raise TypeError at runtime.
-  - robot._draw_lidar_obstacles() requires matplotlib (not imported in robot.py)
-    and treats self._obstacles_mm as a numpy array when it is a list.
-"""
-
 from __future__ import annotations
 import time
 
@@ -79,28 +66,34 @@ def run(robot: Robot) -> None:
         if state == "INIT":
             start_robot(robot)
             print("[FSM] INIT (odometry reset)")
+            # center lane
+            # path_control_points = [
+            #     (0.0,   0.0),
+            #     (0.0, 2500.0),
+            #     (1000.0, 2500.0),
+            # ]
+            # left lane
             path_control_points = [
-                (0.0,   0.0),
-                (0.0, 2500.0),
-                (700.0, 2500.0),
+                (300.0,   0.0),
+                (300.0, 2500.0),
+                (1300.0, 2500.0),
             ]
-            path = densify_polyline(path_control_points, spacing=500.0)
 
-            robot._nav_follow_pp_path(
+            path = densify_polyline(path_control_points, spacing=300.0)
+
+            robot._nav_follow_pp_path_lane(
                 lookahead_distance=100.0,
                 max_linear_speed=130.0,
                 max_angular_speed=1.5,
                 goal_tolerance=20.0,
                 obstacles_range=450.0,
-                safe_dist=200.0,
-                max_turning_angle=math.pi/4,
-                avoidance_delay=100,
-                obstacle_buffer_len=2,
-                obstacle_buffer_delay=200,
-                alpha_Ld=0.3,
-                alpha_Sd=1.5,
-                alpha_angle=0.8,
+                view_angle=math.radians(70.0),
+                safe_dist=240.0,
+                avoidance_delay=150,
+                alpha_Ld=0.8,
+                offset=270.0,
                 obstacle_avoidance=True,
+                x_w=300.0,
             )
             robot._set_pp_path(path)
             print("Path is ready, Entering IDLE state.")

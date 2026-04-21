@@ -1673,6 +1673,38 @@ class Robot:
 
         return "MOVING"
 
+    def _nav_follow_pp_path_lane(
+        self,
+        lookahead_distance: float,
+        max_linear_speed: float,
+        max_angular_speed: float,
+        goal_tolerance: float,
+        obstacles_range: float,
+        view_angle: float,
+        safe_dist: float,
+        avoidance_delay: int,
+        offset: float,
+        alpha_Ld: float,
+        x_w: float = 0.0,
+        obstacle_avoidance: bool = True,
+    ) -> None:
+
+        from robot.path_planner import PurePursuitPlannerWithAvoidanceLane
+        self.planner = PurePursuitPlannerWithAvoidanceLane(
+            lookahead_distance=lookahead_distance,
+            max_linear_speed=max_linear_speed,
+            max_angular_speed=max_angular_speed,
+            goal_tolerance=goal_tolerance,
+            obstacles_range=obstacles_range,
+            view_angle=view_angle,
+            safe_dist=safe_dist,
+            avoidance_delay=avoidance_delay,
+            offset=offset,
+            x_w=x_w,
+            alpha_Ld=alpha_Ld,
+            obstacle_avoidance=obstacle_avoidance, 
+        )
+
     def _nav_follow_pp_path(
         self,
         lookahead_distance: float,
