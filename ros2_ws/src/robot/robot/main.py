@@ -13,7 +13,7 @@ import numpy as np
 # Robot build configuration
 # ---------------------------------------------------------------------------
 
-TAG_ID = 11 # set aruco tag ID 11 
+TAG_ID = 14 # set aruco tag ID 14
 POSITION_UNIT = Unit.MM
 WHEEL_DIAMETER = 74.0
 WHEEL_BASE = 333.0
@@ -75,20 +75,35 @@ def run(robot: Robot) -> None:
             #     (1000.0, 2500.0),
             # ]
             # left lane
-            path_control_points = [ #Define your path control points here (x, y) in mm
-                (0.0, 0.0), # 1st point
-                (0.0, 610.0), # 2nd point
-                (0, 1830), # 3rd point
-                (500.0, 1830.0), # 4th point
-                (500.0, 610.0), # 5th point
-            ]    
+            
+            x1 = 0
+            turn1_x = 250
+            x2 = 300
+            x3 = 250
+            path_control_points = [
+            (x1,    0.0),      # Start
+            (x1,  500.0),
+            (x1, 1000.0),
+            (x1, 1500.0),
+            (x1, 2000.0),
+            (x1, 2500.0),
+            (x1, 2800.0),      # End of straight - 1st turn point
+            (turn1_x, 2800.0),    # 1st 90° turn (move right across lane)
+            (x2, 2800.0),    # 2nd 90° turn (now facing back)
+            (x3, 2500.0),
+            (x3, 2000.0),
+            (x3, 1500.0),
+            (x3, 1000.0),
+            (x3,  500.0),
+            (x3,    0.0),    # End
+            ]
 
             path = densify_polyline(path_control_points, spacing=400.0)
 
             robot._nav_follow_pp_path(
-                lookahead_distance=100.0,
-                max_linear_speed=140.0,
-                max_angular_speed=1.5,
+                lookahead_distance=150.0,
+                max_linear_speed=175.0,
+                max_angular_speed=2.0,
                 goal_tolerance=20.0,
                 obstacles_range=450.0,
                 view_angle=math.radians(70.0),
@@ -97,8 +112,8 @@ def run(robot: Robot) -> None:
                 alpha_Ld=0.7,
                 offset=270.0,
                 lane_width=500.0,
-                obstacle_avoidance=True,
-                x_L=300.0,
+                obstacle_avoidance=False,
+                x_L=0.0,
             )
             robot.planner.set_path(path)
             print("Path is ready, Entering IDLE state.")
@@ -108,7 +123,7 @@ def run(robot: Robot) -> None:
         elif state == "IDLE":
             show_idle_leds(robot)
             robot._draw_lidar_obstacles()
-            if robot.get_button(Button.BTN_1):
+            if robot.was_button_pressed(Button.BTN_1):
                 print("Start Moving!")
                 print("[FSM] MOVING")
                 state = "MOVING"

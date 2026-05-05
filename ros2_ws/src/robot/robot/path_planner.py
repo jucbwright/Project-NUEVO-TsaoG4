@@ -578,8 +578,8 @@ class PurePursuitPlannerWithAvoidance(PathPlanner):
         self.avoidance_counter = 0
         self.avoidance_delay = avoidance_delay
 
-        # self.current_lane = 'Center'
-        self.current_lane = 'Left'
+        self.current_lane = 'Center'
+        # self.current_lane = 'Left'
 
     def set_path(self, path: list[tuple[float, float]]):
         self.raw_path = path.copy()
