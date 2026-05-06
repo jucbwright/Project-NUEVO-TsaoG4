@@ -70,7 +70,7 @@ TAG_ID = 14  # IMPORTANT: set to the ArUco marker ID on your robot
 # ---------------------------------------------------------------------------
 
 GPS_POSITION_ALPHA           = 0.10
-ENABLE_GPS_TANGENT_HEADING   = False
+ENABLE_GPS_TANGENT_HEADING   = True
 GPS_TANGENT_ALPHA            = 0.15
 GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
 
@@ -78,12 +78,57 @@ GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
 # ---------------------------------------------------------------------------
 # Pure pursuit configuration
 # ---------------------------------------------------------------------------
-
+tile = 610.0 # mm (standard tile length))
 PATH_CONTROL_POINTS = [
-    (0.0, 0.0),
-    (0.0, 610*6),
-    (610.0, 610*6),
+    # Straight 1 — right along row 0
+    (tile*0,    tile*0),
+    (tile*0,    tile*6),
+
+    # Turn 1 — down from (0,6) to (1,6)
+    (tile*0.33, tile*6),
+    (tile*0.66, tile*6),
+    (tile*1,    tile*6),
+
+    # Straight 2 — left along row 1
+    (tile*1,    tile*5),
+    (tile*1,    tile*4),
+    (tile*1,    tile*3),
+    (tile*1,    tile*2),
+    (tile*1,    tile*1),
+
+    # Turn 2 — down from (1,1) to (2,1)
+    (tile*1.33, tile*1),
+    (tile*1.66, tile*1),
+    (tile*2,    tile*1),
+
+    # Straight 3 — right along row 2 (obstacle avoidance handles cones later)
+    (tile*2,    tile*2),
+    (tile*2,    tile*3),
+    (tile*2,    tile*4),
+    (tile*2,    tile*5),
+    (tile*2,    tile*6),
+
+    # Turn 3 — down from (2,6) to (3,6)
+    (tile*2.33, tile*6),
+    (tile*2.66, tile*6),
+    (tile*3,    tile*6),
+
+    # Straight 4 — left along row 3
+    (tile*3,    tile*5),
+    (tile*3,    tile*4),
+    (tile*3,    tile*3),
+    (tile*3,    tile*2),
+    (tile*3,    tile*1),
+
+    # Turn 4 — down from (3,1) to (4,1)
+    (tile*3.33, tile*1),
+    (tile*3.66, tile*1),
+    (tile*4,    tile*1),
+
+    # Final straight — left along row 4 to end at (4,0)
+    (tile*4,    tile*0),
 ]
+
 
 # Optional: densify long segments for smoother tracking.
 # PATH_CONTROL_POINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=50.0)
