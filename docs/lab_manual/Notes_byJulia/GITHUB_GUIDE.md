@@ -1,10 +1,10 @@
 **Check if RPi or PC Respository is up to date**
 
-&#x20; git fetch origin
+    git fetch origin
 
-&#x20; git status
+    git status
 
-&#x20;
+    
 
 **Syncing RPi or PC with GitHub** 
 
@@ -16,7 +16,7 @@
 
 **Sending changes from RPi to GitHub**
 
-&#x20; git add <filepath>
+&#x20; git add <"filepath">
 
 &#x20; git commit -m "your message"
 
