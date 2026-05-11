@@ -112,7 +112,7 @@
 
 // Encoder direction inversion (polarity correction)
 // Set to 1 to invert encoder count direction (flips positive/negative)
-#define ENCODER_1_DIR_INVERTED  0       // 0=normal, 1=inverted
+#define ENCODER_1_DIR_INVERTED  1       // 0=normal, 1=inverted
 #define ENCODER_2_DIR_INVERTED  0       // 0=normal, 1=inverted
 #define ENCODER_3_DIR_INVERTED  0       // 0=normal, 1=inverted
 #define ENCODER_4_DIR_INVERTED  0       // 0=normal, 1=inverted
