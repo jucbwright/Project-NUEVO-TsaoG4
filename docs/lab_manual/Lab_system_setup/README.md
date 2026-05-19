@@ -129,7 +129,7 @@ On a fresh clone, or after pulling changes that affect the image, rebuild before
 entering:
 
 ```bash
-./ros2_ws/docker/enter_ros2.sh --build
+git commit -am "your commit message here"
 ```
 
 This builds the image, starts the container, and drops you into a sourced ROS2
@@ -278,6 +278,9 @@ Useful current meanings:
 - `4` = `ESTOP`
 
 ## 11. Current ROS2 Launches
+
+sudo ln -s /dev/ttyUSB0 /dev/rplidar
+./ros2_ws/docker/enter_ros2.sh
 
 The current repo launch entry points include:
 
