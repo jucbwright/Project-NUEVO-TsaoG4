@@ -1,0 +1,21 @@
+Run these lines to get started 
+
+1) Fixes the lidar error that happens upon startup: 
+sudo ln -s /dev/ttyUSB0 /dev/rplidar 
+
+2) Start bridge/lidar/gps/UI
+
+./ros2_ws/docker/enter_ros2.sh
+
+ros2 launch robot everything_but_robot.launch.py
+
+Open a new terminal and use this line to pull up UI:
+curl http://192.168.8.168:8000/health
+
+user: projectroger
+password: bowser
+
+3) Start the robot
+Open a new terminal 
+./ros2_ws/docker/enter_ros2.sh
+ros2 launch robot robot.launch.py
