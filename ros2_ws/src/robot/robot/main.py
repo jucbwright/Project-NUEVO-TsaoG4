@@ -248,20 +248,22 @@ def disable_drive_steppers(robot: Robot) -> None:
 
 
 def move_both(robot: Robot, steps: int) -> bool:
-    ok_l = robot.step_move(
+    handle_l = robot.step_move(
         DRIVE_STEPPER_L,
         steps=steps,
         move_type=StepMoveType.RELATIVE,
-        blocking=True,
+        blocking=False,
         timeout=MOVE_TIMEOUT_S,
     )
-    ok_r = robot.step_move(
+    handle_r = robot.step_move(
         DRIVE_STEPPER_R,
-        steps=steps,
+        steps=-steps,
         move_type=StepMoveType.RELATIVE,
-        blocking=True,
+        blocking=False,
         timeout=MOVE_TIMEOUT_S,
     )
+    ok_l = handle_l.wait(timeout=MOVE_TIMEOUT_S)
+    ok_r = handle_r.wait(timeout=MOVE_TIMEOUT_S)
     return ok_l and ok_r
 
 
