@@ -77,10 +77,10 @@
 
 // DC Motor direction inversion (H-bridge wiring correction)
 // Set to 1 to invert motor direction (swaps forward/reverse)
-#define DC_MOTOR_1_DIR_INVERTED 1       // 0=normal, 1=inverted
+#define DC_MOTOR_1_DIR_INVERTED 0      // 0=normal, 1=inverted
 #define DC_MOTOR_2_DIR_INVERTED 1       // 0=normal, 1=inverted
-#define DC_MOTOR_3_DIR_INVERTED 1       // 0=normal, 1=inverted
-#define DC_MOTOR_4_DIR_INVERTED 1       // 0=normal, 1=inverted
+#define DC_MOTOR_3_DIR_INVERTED 0       // 0=normal, 1=inverted
+#define DC_MOTOR_4_DIR_INVERTED 0       // 0=normal, 1=inverted
 
 // Stepper Motors
 #define NUM_STEPPERS            4       // Total stepper channels
