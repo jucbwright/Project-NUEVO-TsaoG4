@@ -9,11 +9,13 @@ import matplotlib.pyplot as plt
 class LidarSubscriber(Node):
     def __init__(self):
         super().__init__('scan_visualizer')
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.subscription = self.create_subscription(
             LaserScan,
             '/scan',
             self.listener_callback,
-            10
+            qos
         )
         plt.ion()
         self.fig, self.ax = plt.subplots()
