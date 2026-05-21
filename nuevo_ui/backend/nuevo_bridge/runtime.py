@@ -124,11 +124,16 @@ class BridgeRuntime:
         return self.handle_command(cmd, data)
 
     def health_dict(self) -> dict:
+        stats = self.serial_manager.stats
         return {
             "status": "ok",
             "mock_mode": MOCK_MODE,
             "mock_odometry_enabled": MOCK_ODOMETRY_ENABLED,
             "ros2_mode": self.ros_enabled,
-            "serial_connected": self.serial_manager.stats.get("connected", False),
+            "serial_connected": stats.get("connected", False),
+            "arduino_data_ok": getattr(self.serial_manager, "_arduino_data_ok", None),
+            "rx_count": stats.get("rx_count", 0),
+            "crc_errors": stats.get("crc_errors", 0),
+            "decode_errors": stats.get("decode_errors_by_type", {}),
             "ws_connections": self.ws_manager.get_connection_count(),
         }

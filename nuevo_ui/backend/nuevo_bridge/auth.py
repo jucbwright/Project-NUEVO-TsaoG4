@@ -36,8 +36,24 @@ def hash_password(plain: str) -> str:
 
 
 # ─── JWT ──────────────────────────────────────────────────────────────────────
-# Random secret per process start — users re-login after RPi reboot.
-JWT_SECRET = secrets.token_hex(32)
+# Secret persisted next to users.json so tokens survive container restarts.
+# A new secret (and forced re-login) only happens on Pi reboot or volume wipe.
+def _load_or_create_jwt_secret() -> str:
+    secret_file = USERS_FILE.parent / ".jwt_secret"
+    try:
+        if secret_file.exists():
+            return secret_file.read_text().strip()
+    except Exception:
+        pass
+    new_secret = secrets.token_hex(32)
+    try:
+        secret_file.parent.mkdir(parents=True, exist_ok=True)
+        secret_file.write_text(new_secret)
+    except Exception:
+        pass
+    return new_secret
+
+JWT_SECRET = _load_or_create_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 30
 

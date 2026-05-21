@@ -126,8 +126,8 @@ STATUS_PRINT_INTERVAL_S = 0.5
 # ---------------------------------------------------------------------------
 # Stepper configuration — change these to match your PCB connectors
 # ---------------------------------------------------------------------------
-DRIVE_STEPPER_L = Stepper.STEPPER_2    # Left drive motor
-DRIVE_STEPPER_R = Stepper.STEPPER_3    # Right drive motor
+DRIVE_STEPPER_L = Stepper.STEPPER_1    # Left drive motor
+DRIVE_STEPPER_R = Stepper.STEPPER_2    # Right drive motor
 
 STEPS_PER_RUN   = 200                  # Steps per move
 MAX_VELOCITY    = 800                  # Steps/sec
@@ -248,22 +248,20 @@ def disable_drive_steppers(robot: Robot) -> None:
 
 
 def move_both(robot: Robot, steps: int) -> bool:
-    handle_l = robot.step_move(
+    ok_l = robot.step_move(
         DRIVE_STEPPER_L,
         steps=steps,
         move_type=StepMoveType.RELATIVE,
-        blocking=False,
+        blocking=True,
         timeout=MOVE_TIMEOUT_S,
     )
-    handle_r = robot.step_move(
+    ok_r = robot.step_move(
         DRIVE_STEPPER_R,
         steps=-steps,
         move_type=StepMoveType.RELATIVE,
-        blocking=False,
+        blocking=True,
         timeout=MOVE_TIMEOUT_S,
     )
-    ok_l = handle_l.wait(timeout=MOVE_TIMEOUT_S)
-    ok_r = handle_r.wait(timeout=MOVE_TIMEOUT_S)
     return ok_l and ok_r
 
 

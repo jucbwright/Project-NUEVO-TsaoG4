@@ -62,7 +62,7 @@ section "Native camera enumeration"
 if command -v rpicam-hello >/dev/null 2>&1; then
     camera_list="$(rpicam-hello --list-cameras 2>&1 || true)"
     printf '%s\n' "$camera_list" | sed 's/^/  /'
-    if printf '%s\n' "$camera_list" | grep -Eq 'imx219|^[[:space:]]*[0-9]+[[:space:]]*:'; then
+    if printf '%s\n' "$camera_list" | grep -Eq 'imx219|imx708|^[[:space:]]*[0-9]+[[:space:]]*:'; then
         pass "native libcamera can enumerate a camera"
     else
         fail "native libcamera did not report a camera"

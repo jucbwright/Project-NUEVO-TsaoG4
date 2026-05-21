@@ -134,6 +134,13 @@ if [[ -f "$config_path" ]]; then
         camera_config_changed=1
         log "backup saved to $backup_path"
     fi
+    # Pi Camera Module 3 (IMX708) on Pi 5 requires an explicit dtoverlay in addition
+    # to camera_auto_detect=1; without it the driver fails to read the chip ID (EIO).
+    if ! grep -Eq '^[[:space:]]*dtoverlay=imx708([[:space:],]|$)' "$config_path"; then
+        log "adding dtoverlay=imx708 to $config_path"
+        printf 'dtoverlay=imx708\n' | "${sudo_cmd[@]}" tee -a "$config_path" >/dev/null
+        camera_config_changed=1
+    fi
 else
     warn "$config_path does not exist; skipping camera_auto_detect setup"
 fi

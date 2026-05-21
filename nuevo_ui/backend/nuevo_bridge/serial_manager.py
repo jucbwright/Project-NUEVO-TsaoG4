@@ -375,7 +375,7 @@ class SerialManager:
 
         print("[Serial] Manager started (reader thread is hardware-driven).")
 
-        ARDUINO_DATA_TIMEOUT = 0.500  # seconds — UI shows disconnected after this
+        ARDUINO_DATA_TIMEOUT = 2.0    # seconds — UI shows disconnected after this (Arduino idles at 1 Hz)
         ARDUINO_RECONNECT_DELAY = 5.0  # seconds — port closed/reopened after this
 
         try:
