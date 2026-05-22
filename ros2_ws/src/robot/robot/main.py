@@ -1,96 +1,184 @@
 """
-manipulation_stepperONLY.py -- aim-and-shoot with two steppers
-=============================================================
-Controls a pan/tilt shooter mechanism using only stepper motors.
-
-  STEPPER_1 = pan  (side-to-side arc)
-  STEPPER_2 = tilt (up/down)
-
-HOW TO RUN
-----------
+pure_pursuit.py — FSM-based pure-pursuit path following
+=======================================================
 Copy this file over main.py, then restart the robot node:
 
-    cp examples/manipulation_stepperONLY.py main.py
+    cp examples/pure_pursuit.py main.py
     ros2 run robot robot
 
-WHAT THE ROBOT DOES
--------------------
-On startup: both steppers home against their limit switches to establish (0, 0).
-
-  BTN_1 -- cycle to the next preset target and aim at it (pan + tilt simultaneously)
-  BTN_3 -- re-home both steppers and reset the target index
-
-Targets are defined in TARGETS as (pan_steps, tilt_steps) absolute positions
-from the home origin.  Add, remove, or adjust entries to match your setup.
-
-CAMERA INTEGRATION NOTE
------------------------
-Future: replace the BTN_1 cycle logic with a callback that receives a detected
-target's pixel coordinates, converts them to (pan_steps, tilt_steps) via a
-calibration matrix, and calls aim_at() directly.  The aim_at() function is
-already written for that use case -- it accepts any Target.
+BTN_1 starts the path. BTN_2 cancels and returns to IDLE.
 """
 
 from __future__ import annotations
 
 import time
-from typing import NamedTuple
 
 from robot.hardware_map import (
     Button,
     DEFAULT_FSM_HZ,
     LED,
+    INITIAL_THETA_DEG,
+    LIDAR_FOV_DEG,
+    LIDAR_MOUNT_THETA_DEG,
+    LIDAR_MOUNT_X_MM,
+    LIDAR_MOUNT_Y_MM,
+    LIDAR_RANGE_MAX_MM,
+    LIDAR_RANGE_MIN_MM,
+    LEFT_WHEEL_DIR_INVERTED,
+    LEFT_WHEEL_MOTOR,
     POSITION_UNIT,
-    StepMoveType,
-    Stepper,
-    StepperMotionState,
+    RIGHT_WHEEL_DIR_INVERTED,
+    RIGHT_WHEEL_MOTOR,
+    TAG_BODY_OFFSET_X_MM,
+    TAG_BODY_OFFSET_Y_MM,
+    WHEEL_BASE,
+    WHEEL_DIAMETER,
 )
 from robot.robot import FirmwareState, Robot
+from robot.util import densify_polyline  # noqa: F401 - optional helper for students
 
 
 # ---------------------------------------------------------------------------
-# Hardware config -- edit to match your build
+# Sensor toggles — set True if the corresponding node is running
+# Hardware calibration (wheel geometry, lidar mount, tag offset) lives in
+# robot/hardware_map.py.
 # ---------------------------------------------------------------------------
 
-PAN_STEPPER  = Stepper.STEPPER_1
-TILT_STEPPER = Stepper.STEPPER_2
+ENABLE_LIDAR = True
+ENABLE_GPS   = True
 
-PAN_MAX_VEL  = 800    # steps/s
-PAN_ACCEL    = 400    # steps/s^2
-PAN_HOME_VEL = 300    # steps/s  (slow for reliable homing)
-
-TILT_MAX_VEL  = 600
-TILT_ACCEL    = 300
-TILT_HOME_VEL = 200
-
-HOME_TIMEOUT_S = 15.0   # max seconds per homing move
-AIM_TIMEOUT_S  = 10.0   # max seconds to wait for both steppers to reach target
-AIM_POLL_S     = 0.02   # polling interval while waiting for moves to finish
+TAG_ID = 14  # IMPORTANT: set to the ArUco marker ID on your robot
 
 
 # ---------------------------------------------------------------------------
-# Target table -- (pan_steps, tilt_steps) absolute from home origin
+# GPS tuning (only used when ENABLE_GPS = True)
+#
+# GPS_POSITION_ALPHA     — how strongly each GPS fix pulls the fused position.
+#                          0.05 = smooth/slow, 0.10 = default, 0.30 = aggressive
+#
+# ENABLE_GPS_TANGENT_HEADING — derive heading from GPS trajectory direction.
+#                          False = pure odometry heading (default).
+#
+# GPS_TANGENT_ALPHA      — how strongly GPS tangent corrects odometry heading.
+#                          0.05 = gentle, 0.15 = default, 0.30 = aggressive
+#
+# GPS_TANGENT_MIN_DISPLACEMENT_MM — travel required before accepting a new
+#                          heading sample. 100 = responsive, 200 = default,
+#                          400 = noise-robust (for jittery GPS)
+#
+# To tune: watch θ_odom vs θ_fused in the status output while running.
 # ---------------------------------------------------------------------------
 
-class Target(NamedTuple):
-    label: str
-    pan:   int   # absolute steps from pan home
-    tilt:  int   # absolute steps from tilt home
+GPS_POSITION_ALPHA           = 0.10
+ENABLE_GPS_TANGENT_HEADING   = False
+GPS_TANGENT_ALPHA            = 0.15
+GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
 
 
-TARGETS: list[Target] = [
-    Target("CENTER",     pan=0,    tilt=0),
-    Target("LEFT-LOW",   pan=-500, tilt=300),
-    Target("RIGHT-HIGH", pan=500,  tilt=-300),
+# ---------------------------------------------------------------------------
+# Pure pursuit configuration
+# ---------------------------------------------------------------------------
+tile = 610.0  # mm (standard tile length)
+PATH_CONTROL_POINTS = [
+    # Straight 1 — right along row 0
+    (tile*0,    tile*0),
+    (tile*0,    tile*6),
+
+    # Turn 1 — down from (0,6) to (1,6)
+    (tile*0.33, tile*6),
+    (tile*0.66, tile*6),
+    (tile*1,    tile*6),
+
+    # Straight 2 — left along row 1
+    (tile*1,    tile*5),
+    (tile*1,    tile*4),
+    (tile*1,    tile*3),
+    (tile*1,    tile*2),
+    (tile*1,    tile*1),
+
+    # Turn 2 — down from (1,1) to (2,1)
+    (tile*1.33, tile*1),
+    (tile*1.66, tile*1),
+    (tile*2,    tile*1),
+
+    # Straight 3
+    (tile*2,    tile*2),
+    (tile*2,    tile*3),
+    (tile*2,    tile*4),
+    (tile*2,    tile*5),
+    (tile*2,    tile*6),
+
+    # Turn 3 — down from (2,6) to (3,6)
+    (tile*2.33, tile*6),
+    (tile*2.66, tile*6),
+    (tile*3,    tile*6),
+
+    # Straight 4 — left along row 3
+    (tile*3,    tile*5),
+    (tile*3,    tile*4),
+    (tile*3,    tile*3),
+    (tile*3,    tile*2),
+    (tile*3,    tile*1),
+
+    # Turn 4 — down from (3,1) to (4,1)
+    (tile*3.33, tile*1),
+    (tile*3.66, tile*1),
+    (tile*4,    tile*1),
+
+    # Final straight
+    (tile*4,    tile*0),
 ]
 
+# Optional: densify long segments for smoother tracking.
+# PATH_CONTROL_POINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=50.0)
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+VELOCITY_MM_S      = 150.0
+LOOKAHEAD_MM       = 120.0
+TOLERANCE_MM       = 25.0
+ADVANCE_RADIUS_MM  = 80.0
+MAX_ANGULAR_RAD_S  = 1.5
+
+STATUS_PRINT_INTERVAL_S = 0.5
+
 
 def configure_robot(robot: Robot) -> None:
     robot.set_unit(POSITION_UNIT)
+    robot.set_odometry_parameters(
+        wheel_diameter=WHEEL_DIAMETER,
+        wheel_base=WHEEL_BASE,
+        initial_theta_deg=INITIAL_THETA_DEG,
+        left_motor_id=LEFT_WHEEL_MOTOR,
+        left_motor_dir_inverted=LEFT_WHEEL_DIR_INVERTED,
+        right_motor_id=RIGHT_WHEEL_MOTOR,
+        right_motor_dir_inverted=RIGHT_WHEEL_DIR_INVERTED,
+    )
+
+    if ENABLE_LIDAR:
+        robot.enable_lidar()
+        robot.set_lidar_mount(
+            x_mm=LIDAR_MOUNT_X_MM,
+            y_mm=LIDAR_MOUNT_Y_MM,
+            theta_deg=LIDAR_MOUNT_THETA_DEG,
+        )
+        robot.set_lidar_filter(
+            range_min_mm=LIDAR_RANGE_MIN_MM,
+            range_max_mm=LIDAR_RANGE_MAX_MM,
+            fov_deg=LIDAR_FOV_DEG,
+        )
+        robot.start_lidar_world_publisher()
+        print("[sensor] lidar enabled — subscribing to /scan")
+
+    if ENABLE_GPS:
+        robot.enable_gps()
+        robot.set_tracked_tag_id(TAG_ID)
+        robot.set_tag_body_offset(TAG_BODY_OFFSET_X_MM, TAG_BODY_OFFSET_Y_MM)
+        robot.set_position_fusion_alpha(GPS_POSITION_ALPHA)
+        print(f"[sensor] GPS enabled — tracking ArUco tag {TAG_ID}")
+        if ENABLE_GPS_TANGENT_HEADING:
+            robot.enable_gps_tangent_heading(
+                alpha=GPS_TANGENT_ALPHA,
+                min_displacement_mm=GPS_TANGENT_MIN_DISPLACEMENT_MM,
+            )
 
 
 def start_robot(robot: Robot) -> None:
@@ -100,142 +188,123 @@ def start_robot(robot: Robot) -> None:
     robot.set_state(FirmwareState.RUNNING)
 
 
+def reset_mission_pose(robot: Robot) -> None:
+    robot.reset_odometry()
+    if not robot.wait_for_odometry_reset(timeout=2.0):
+        print("[warn] odometry reset not confirmed within 2.0s; continuing with latest pose")
+        robot.wait_for_pose_update(timeout=0.5)
+
+
 def show_idle_leds(robot: Robot) -> None:
     robot.set_led(LED.ORANGE, 200)
     robot.set_led(LED.GREEN, 0)
 
 
-def show_running_leds(robot: Robot) -> None:
+def show_moving_leds(robot: Robot) -> None:
     robot.set_led(LED.ORANGE, 0)
     robot.set_led(LED.GREEN, 200)
 
 
-def _stepper_index(stepper: Stepper) -> int:
-    """Convert Stepper enum to zero-based index into StepStateAll.steppers."""
-    return int(stepper) - 1
+def print_status(robot: Robot) -> None:
+    ox, oy, otheta = robot.get_odometry_pose()
+    if ENABLE_GPS and robot.has_fused_pose():
+        fx, fy, ftheta = robot.get_fused_pose()
+        print(
+            f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ_odom={otheta:5.1f}°  |  "
+            f"fused=({fx:6.0f}, {fy:6.0f}) mm  θ_fused={ftheta:5.1f}°  "
+            f"gps={'fresh' if robot.is_gps_active() else 'stale'}"
+        )
+    else:
+        print(f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°")
 
 
-def _both_idle(robot: Robot) -> bool:
-    """Return True when both pan and tilt steppers report IDLE motion_state."""
-    state = robot.get_step_state()
-    if state is None:
-        return False
-    pan_state  = state.steppers[_stepper_index(PAN_STEPPER)].motion_state
-    tilt_state = state.steppers[_stepper_index(TILT_STEPPER)].motion_state
-    return (pan_state == StepperMotionState.IDLE and
-            tilt_state == StepperMotionState.IDLE)
-
-
-def _home_one(robot: Robot, stepper: Stepper, home_vel: int, label: str) -> bool:
-    print(f"[HOME] homing {label}...")
-    robot.step_enable(stepper)
-    ok = robot.step_home(
-        stepper,
-        direction=-1,
-        home_velocity=home_vel,
-        backoff_steps=50,
-        blocking=True,
-        timeout=HOME_TIMEOUT_S,
+def start_path(robot: Robot):
+    return robot.purepursuit_follow_path(
+        waypoints=PATH_CONTROL_POINTS,
+        velocity=VELOCITY_MM_S,
+        lookahead=LOOKAHEAD_MM,
+        tolerance=TOLERANCE_MM,
+        advance_radius=ADVANCE_RADIUS_MM,
+        max_angular_rad_s=MAX_ANGULAR_RAD_S,
+        blocking=False,
     )
-    if not ok:
-        print(f"[warn] {label} homing timed out -- check limit switch wiring")
-        robot.step_disable(stepper)
-        return False
-    print(f"[HOME] {label} homed at origin")
-    return True
 
-
-def home_all(robot: Robot) -> bool:
-    """Home pan then tilt; both steppers stay enabled after homing."""
-    robot.step_set_config(PAN_STEPPER,  max_velocity=PAN_MAX_VEL,  acceleration=PAN_ACCEL)
-    robot.step_set_config(TILT_STEPPER, max_velocity=TILT_MAX_VEL, acceleration=TILT_ACCEL)
-    if not _home_one(robot, PAN_STEPPER,  PAN_HOME_VEL,  "pan"):
-        return False
-    if not _home_one(robot, TILT_STEPPER, TILT_HOME_VEL, "tilt"):
-        return False
-    return True
-
-
-def aim_at(robot: Robot, target: Target) -> bool:
-    """
-    Move pan and tilt simultaneously to target's absolute step positions.
-
-    Issues both moves non-blocking so they run in parallel, then polls
-    StepperMotionState until both report IDLE (or timeout expires).
-    Returns True on success, False on timeout.
-    """
-    print(f"[AIM] -> {target.label}  pan={target.pan}  tilt={target.tilt}")
-
-    # Start both moves at the same time (non-blocking)
-    robot.step_move(PAN_STEPPER,  steps=target.pan,  move_type=StepMoveType.ABSOLUTE, blocking=False)
-    robot.step_move(TILT_STEPPER, steps=target.tilt, move_type=StepMoveType.ABSOLUTE, blocking=False)
-
-    # Poll until both are idle or timeout
-    deadline = time.monotonic() + AIM_TIMEOUT_S
-    while time.monotonic() < deadline:
-        if _both_idle(robot):
-            print(f"[AIM] aimed at {target.label}")
-            return True
-        time.sleep(AIM_POLL_S)
-
-    print(f"[warn] aim timed out before reaching {target.label}")
-    return False
-
-
-# ---------------------------------------------------------------------------
-# FSM entry point
-# ---------------------------------------------------------------------------
 
 def run(robot: Robot) -> None:
     configure_robot(robot)
 
     state = "INIT"
-    target_index = 0
+    drive_handle = None
+    last_status_print_at = 0.0
 
-    period    = 1.0 / float(DEFAULT_FSM_HZ)
+    period = 1.0 / float(DEFAULT_FSM_HZ)
     next_tick = time.monotonic()
 
     while True:
+        now = time.monotonic()
+
         if state == "INIT":
             start_robot(robot)
-            show_running_leds(robot)
-            ok = home_all(robot)
+            reset_mission_pose(robot)
             show_idle_leds(robot)
-            if ok:
-                print("[FSM] IDLE -- BTN_1 cycles targets, BTN_3 re-homes")
-                for i, t in enumerate(TARGETS):
-                    print(f"  [{i}] {t.label}  pan={t.pan}  tilt={t.tilt}")
-            else:
-                print("[FSM] IDLE -- homing failed; check limit switches before aiming")
+            print("[FSM] IDLE — press BTN_1 to start path, BTN_2 to cancel")
+            print(
+                f"[CFG] velocity={VELOCITY_MM_S:.0f} mm/s  lookahead={LOOKAHEAD_MM:.0f} mm  "
+                f"tolerance={TOLERANCE_MM:.0f} mm  advance_radius={ADVANCE_RADIUS_MM:.0f} mm"
+            )
+            if ENABLE_LIDAR:
+                print(
+                    f"[CFG] lidar mount=({LIDAR_MOUNT_X_MM:.0f}, {LIDAR_MOUNT_Y_MM:.0f}) mm "
+                    f"theta={LIDAR_MOUNT_THETA_DEG:.1f}° filter={LIDAR_RANGE_MIN_MM:.0f}-"
+                    f"{LIDAR_RANGE_MAX_MM:.0f} mm fov={LIDAR_FOV_DEG}"
+                )
+            if ENABLE_GPS:
+                print(
+                    f"[CFG] gps tag_id={TAG_ID}  "
+                    f"tag_body=({TAG_BODY_OFFSET_X_MM:.0f}, {TAG_BODY_OFFSET_Y_MM:.0f}) mm  "
+                    f"position_alpha={GPS_POSITION_ALPHA:.2f}"
+                )
+                if ENABLE_GPS_TANGENT_HEADING:
+                    print(
+                        f"[CFG] heading=gps_tangent  "
+                        f"alpha={GPS_TANGENT_ALPHA:.2f}  "
+                        f"min_displacement={GPS_TANGENT_MIN_DISPLACEMENT_MM:.0f} mm"
+                    )
+                else:
+                    print("[CFG] heading=imu")
             state = "IDLE"
 
         elif state == "IDLE":
             if robot.was_button_pressed(Button.BTN_1):
-                show_running_leds(robot)
-                state = "AIM"
-            elif robot.was_button_pressed(Button.BTN_3):
-                show_running_leds(robot)
-                print("[FSM] RE-HOME")
-                state = "HOME"
+                reset_mission_pose(robot)
+                show_moving_leds(robot)
+                print(f"[FSM] MOVING — {len(PATH_CONTROL_POINTS)} waypoints")
+                drive_handle = start_path(robot)
+                last_status_print_at = now
+                state = "MOVING"
 
-        elif state == "AIM":
-            target = TARGETS[target_index]
-            aim_at(robot, target)
-            target_index = (target_index + 1) % len(TARGETS)
-            show_idle_leds(robot)
-            next_target = TARGETS[target_index]
-            print(f"[FSM] IDLE -- at {target.label}, BTN_1 -> {next_target.label}")
-            state = "IDLE"
-
-        elif state == "HOME":
-            ok = home_all(robot)
-            target_index = 0
-            show_idle_leds(robot)
-            if ok:
-                print("[FSM] IDLE -- re-homed, target index reset to 0")
+        elif state == "MOVING":
+            if robot.was_button_pressed(Button.BTN_2):
+                if drive_handle is not None:
+                    drive_handle.cancel()
+                    drive_handle.wait(timeout=1.0)
+                    drive_handle = None
+                robot.stop()
+                show_idle_leds(robot)
+                print("[FSM] IDLE — path cancelled")
+                state = "IDLE"
             else:
-                print("[FSM] IDLE -- re-homing failed")
-            state = "IDLE"
+                if now - last_status_print_at >= STATUS_PRINT_INTERVAL_S:
+                    print_status(robot)
+                    last_status_print_at = now
+                if drive_handle is not None and drive_handle.is_finished():
+                    print("[FSM] DONE — path complete")
+                    print_status(robot)
+                    drive_handle = None
+                    robot.stop()
+                    show_idle_leds(robot)
+                    print("[FSM] IDLE — press BTN_1 to run again")
+                    state = "IDLE"
 
         next_tick += period
         sleep_s = next_tick - time.monotonic()

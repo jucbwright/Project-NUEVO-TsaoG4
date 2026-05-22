@@ -21,4 +21,11 @@ def generate_launch_description():
                 )
             ),
         ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution(
+                    [FindPackageShare("robot"), "launch", "robot.launch.py"]
+                )
+            ),
+        ),
     ])

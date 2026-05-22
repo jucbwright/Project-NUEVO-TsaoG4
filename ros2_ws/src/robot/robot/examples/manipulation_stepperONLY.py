@@ -15,13 +15,13 @@ Copy this file over main.py, then restart the robot node:
 
 WHAT THE ROBOT DOES
 -------------------
-On startup: both steppers home against their limit switches to establish (0, 0).
+On startup: both steppers are enabled and current position is treated as (0, 0).
+Manually position the mechanism at your desired home before starting.
 
   BTN_1 -- cycle to the next preset target and aim at it (pan + tilt simultaneously)
-  BTN_3 -- re-home both steppers and reset the target index
 
 Targets are defined in TARGETS as (pan_steps, tilt_steps) absolute positions
-from the home origin.  Add, remove, or adjust entries to match your setup.
+from the startup origin.  Add, remove, or adjust entries to match your setup.
 
 CAMERA INTEGRATION NOTE
 -----------------------
@@ -57,31 +57,57 @@ TILT_STEPPER = Stepper.STEPPER_2
 
 PAN_MAX_VEL  = 800    # steps/s
 PAN_ACCEL    = 400    # steps/s^2
-PAN_HOME_VEL = 300    # steps/s  (slow for reliable homing)
 
 TILT_MAX_VEL  = 600
 TILT_ACCEL    = 300
-TILT_HOME_VEL = 200
 
-HOME_TIMEOUT_S = 15.0   # max seconds per homing move
 AIM_TIMEOUT_S  = 10.0   # max seconds to wait for both steppers to reach target
 AIM_POLL_S     = 0.02   # polling interval while waiting for moves to finish
 
 
 # ---------------------------------------------------------------------------
-# Target table -- (pan_steps, tilt_steps) absolute from home origin
+# Pixel -> step conversion  (tune these two constants experimentally)
+# ---------------------------------------------------------------------------
+
+IMG_W = 640
+IMG_H = 480
+HFOV  = 62.2   # degrees, horizontal field of view (Pi Camera 3 default)
+VFOV  = 48.8   # degrees, vertical field of view
+
+# Steps per degree of physical rotation -- measure and adjust until accurate.
+# To calibrate: command 1000 steps, measure actual degrees rotated,
+# then set STEPS_PER_DEG = 1000 / measured_degrees.
+PAN_STEPS_PER_DEG  = 10.0
+TILT_STEPS_PER_DEG = 10.0
+
+
+def pixels_to_steps(px: float, py: float) -> tuple[int, int]:
+    """Convert pixel coords to absolute pan/tilt steps from origin (center frame = 0,0)."""
+    pan_deg  = (px - IMG_W / 2) / IMG_W  * HFOV
+    tilt_deg = (py - IMG_H / 2) / IMG_H  * VFOV
+    return int(pan_deg * PAN_STEPS_PER_DEG), int(tilt_deg * TILT_STEPS_PER_DEG)
+
+
+# ---------------------------------------------------------------------------
+# Target table -- define in pixel coords; steps are computed automatically.
+# Center of frame is (320, 240).  Right/down are positive.
 # ---------------------------------------------------------------------------
 
 class Target(NamedTuple):
     label: str
-    pan:   int   # absolute steps from pan home
-    tilt:  int   # absolute steps from tilt home
+    pan:   int   # absolute steps from startup origin
+    tilt:  int   # absolute steps from startup origin
+
+    @staticmethod
+    def from_pixels(label: str, px: float, py: float) -> "Target":
+        pan, tilt = pixels_to_steps(px, py)
+        return Target(label, pan, tilt)
 
 
 TARGETS: list[Target] = [
-    Target("CENTER",     pan=0,    tilt=0),
-    Target("LEFT-LOW",   pan=-500, tilt=300),
-    Target("RIGHT-HIGH", pan=500,  tilt=-300),
+    Target.from_pixels("CENTER",     px=320, py=240),   # center of frame
+    Target.from_pixels("LEFT-LOW",   px=100, py=380),
+    Target.from_pixels("RIGHT-HIGH", px=540, py=100),
 ]
 
 
@@ -126,34 +152,12 @@ def _both_idle(robot: Robot) -> bool:
             tilt_state == StepperMotionState.IDLE)
 
 
-def _home_one(robot: Robot, stepper: Stepper, home_vel: int, label: str) -> bool:
-    print(f"[HOME] homing {label}...")
-    robot.step_enable(stepper)
-    ok = robot.step_home(
-        stepper,
-        direction=-1,
-        home_velocity=home_vel,
-        backoff_steps=50,
-        blocking=True,
-        timeout=HOME_TIMEOUT_S,
-    )
-    if not ok:
-        print(f"[warn] {label} homing timed out -- check limit switch wiring")
-        robot.step_disable(stepper)
-        return False
-    print(f"[HOME] {label} homed at origin")
-    return True
-
-
-def home_all(robot: Robot) -> bool:
-    """Home pan then tilt; both steppers stay enabled after homing."""
+def setup_steppers(robot: Robot) -> None:
+    """Enable both steppers and apply motion config. Current position becomes (0, 0)."""
     robot.step_set_config(PAN_STEPPER,  max_velocity=PAN_MAX_VEL,  acceleration=PAN_ACCEL)
     robot.step_set_config(TILT_STEPPER, max_velocity=TILT_MAX_VEL, acceleration=TILT_ACCEL)
-    if not _home_one(robot, PAN_STEPPER,  PAN_HOME_VEL,  "pan"):
-        return False
-    if not _home_one(robot, TILT_STEPPER, TILT_HOME_VEL, "tilt"):
-        return False
-    return True
+    robot.step_enable(PAN_STEPPER)
+    robot.step_enable(TILT_STEPPER)
 
 
 def aim_at(robot: Robot, target: Target) -> bool:
@@ -198,25 +202,17 @@ def run(robot: Robot) -> None:
     while True:
         if state == "INIT":
             start_robot(robot)
-            show_running_leds(robot)
-            ok = home_all(robot)
+            setup_steppers(robot)
             show_idle_leds(robot)
-            if ok:
-                print("[FSM] IDLE -- BTN_1 cycles targets, BTN_3 re-homes")
-                for i, t in enumerate(TARGETS):
-                    print(f"  [{i}] {t.label}  pan={t.pan}  tilt={t.tilt}")
-            else:
-                print("[FSM] IDLE -- homing failed; check limit switches before aiming")
+            print("[FSM] IDLE -- BTN_1 cycles targets (current position is origin)")
+            for i, t in enumerate(TARGETS):
+                print(f"  [{i}] {t.label}  pan={t.pan}  tilt={t.tilt}")
             state = "IDLE"
 
         elif state == "IDLE":
             if robot.was_button_pressed(Button.BTN_1):
                 show_running_leds(robot)
                 state = "AIM"
-            elif robot.was_button_pressed(Button.BTN_3):
-                show_running_leds(robot)
-                print("[FSM] RE-HOME")
-                state = "HOME"
 
         elif state == "AIM":
             target = TARGETS[target_index]
@@ -225,16 +221,6 @@ def run(robot: Robot) -> None:
             show_idle_leds(robot)
             next_target = TARGETS[target_index]
             print(f"[FSM] IDLE -- at {target.label}, BTN_1 -> {next_target.label}")
-            state = "IDLE"
-
-        elif state == "HOME":
-            ok = home_all(robot)
-            target_index = 0
-            show_idle_leds(robot)
-            if ok:
-                print("[FSM] IDLE -- re-homed, target index reset to 0")
-            else:
-                print("[FSM] IDLE -- re-homing failed")
             state = "IDLE"
 
         next_tick += period
