@@ -86,8 +86,16 @@ def find_traffic_light_color(robot: Robot) -> str | None:
 
     for detection in robot.get_detections("traffic light"):
         confidence = float(detection["confidence"])
+        # confidence = float(detection["x"])
         if confidence < MIN_TRAFFIC_LIGHT_CONFIDENCE:
             continue
+
+        # detection.class_name 
+        # detection.confidence 
+        # detection.x 
+        # detection.y 
+        # detection.width 
+        # detection.height 
 
         attributes = detection.get("attributes", {})
         color_attribute = attributes.get("color", {})

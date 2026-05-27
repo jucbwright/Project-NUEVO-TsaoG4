@@ -1,0 +1,7 @@
+cp [filepathSTARTING.txt] [filepath2.txt] copies one file from spot 1 to spot 2.
+ --> right click the file and "Copy Filepath"
+
+
+restart docker
+./ros2_ws/docker/restart.sh
+./ros2_ws/docker/enter_ros2.sh

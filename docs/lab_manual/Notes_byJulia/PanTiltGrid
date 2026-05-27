@@ -72,41 +72,15 @@ DWELL_S        = 3.0    # seconds to hold each position before moving to the nex
 
 
 # ---------------------------------------------------------------------------
-# Grid positions (steps from startup origin) -- tune to match your build
-# ---------------------------------------------------------------------------
-
-PAN_L, PAN_C, PAN_R    = -400,   0, 400   # pan columns: left / center / right
-TILT_U, TILT_C, TILT_D =  200,   0, -200  # tilt rows:   up   / center / down
-
-
-# ---------------------------------------------------------------------------
-# Movement sequence -- snake scan across the grid.
-# Pan moves to each column; tilt direction reverses each column so the
-# mechanism never backtracks (boustrophedon / S-curve pattern).
-#
-#   LEFT col      CENTER col    RIGHT col
-#     UP      →                →  UP
-#     CTR         (reversed)      CTR
-#     DOWN    →   DOWN            DOWN
-#                 CTR
-#                 UP        →
+# Movement sequence -- runs in order each time BTN_1 is pressed.
+# Tune pan values: command 1000 steps, measure rotation, scale accordingly.
 # ---------------------------------------------------------------------------
 
 SEQUENCE: list[Target] = [
-    # Left column — tilt top → bottom
-    Target("L_UP",    PAN_L, TILT_U),
-    Target("L_CTR",   PAN_L, TILT_C),
-    Target("L_DOWN",  PAN_L, TILT_D),
-    # Center column — tilt bottom → top (snake reversal)
-    Target("C_DOWN",  PAN_C, TILT_D),
-    Target("C_CTR",   PAN_C, TILT_C),
-    Target("C_UP",    PAN_C, TILT_U),
-    # Right column — tilt top → bottom (snake reversal)
-    Target("R_UP",    PAN_R, TILT_U),
-    Target("R_CTR",   PAN_R, TILT_C),
-    Target("R_DOWN",  PAN_R, TILT_D),
-    # Return home
-    Target("HOME",    PAN_C, TILT_C),
+    Target(label="LEFT",   pan=-400, tilt=0),   # ~40° left  -- tune pan value
+    Target(label="CENTER", pan=0,    tilt=0),   # return to origin
+    Target(label="RIGHT",  pan=400,  tilt=0),   # ~40° right -- tune pan value
+    Target(label="CENTER", pan=0,    tilt=0),   # return to origin
 ]
 
 
@@ -137,37 +111,28 @@ def show_running_leds(robot: Robot) -> None:
 
 def setup_steppers(robot: Robot) -> None:
     """Enable both steppers and apply motion config. Current position becomes (0, 0)."""
-    global _current_pan, _current_tilt
     robot.step_set_config(PAN_STEPPER,  max_velocity=PAN_MAX_VEL,  acceleration=PAN_ACCEL)
     robot.step_set_config(TILT_STEPPER, max_velocity=TILT_MAX_VEL, acceleration=TILT_ACCEL)
     robot.step_enable(PAN_STEPPER)
     robot.step_enable(TILT_STEPPER)
-    _current_pan = _current_tilt = 0
-
-
-_current_pan:  int = 0
-_current_tilt: int = 0
 
 
 def aim_at(robot: Robot, target: Target) -> bool:
-    """Move pan then tilt to target's absolute step positions (blocking)."""
-    global _current_pan, _current_tilt
+    """Move pan then tilt to target's absolute step positions (blocking, like manipulation.py)."""
     print(f"[AIM] -> {target.label}  pan={target.pan}  tilt={target.tilt}")
 
-    if target.pan != _current_pan:
-        ok_pan = robot.step_move(
-            PAN_STEPPER,
-            steps=target.pan,
-            move_type=StepMoveType.ABSOLUTE,
-            blocking=True,
-            timeout=AIM_TIMEOUT_S,
-        )
-        if not ok_pan:
-            print(f"[warn] pan timed out before reaching {target.label}")
-            return False
-        _current_pan = target.pan
+    ok_pan = robot.step_move(
+        PAN_STEPPER,
+        steps=target.pan,
+        move_type=StepMoveType.ABSOLUTE,
+        blocking=True,
+        timeout=AIM_TIMEOUT_S,
+    )
+    if not ok_pan:
+        print(f"[warn] pan timed out before reaching {target.label}")
+        return False
 
-    if target.tilt != _current_tilt:
+    if target.tilt != 0:
         ok_tilt = robot.step_move(
             TILT_STEPPER,
             steps=target.tilt,
@@ -178,7 +143,6 @@ def aim_at(robot: Robot, target: Target) -> bool:
         if not ok_tilt:
             print(f"[warn] tilt timed out before reaching {target.label}")
             return False
-        _current_tilt = target.tilt
 
     print(f"[AIM] aimed at {target.label}")
     return True

@@ -36,6 +36,13 @@ from __future__ import annotations
 import time
 from typing import NamedTuple
 
+
+class Target(NamedTuple):
+    label: str
+    pan: int    # absolute steps from startup origin (STEPPER_1)
+    tilt: int   # absolute steps from startup origin (STEPPER_2)
+
+
 from robot.hardware_map import (
     Button,
     DEFAULT_FSM_HZ,
@@ -43,7 +50,6 @@ from robot.hardware_map import (
     POSITION_UNIT,
     StepMoveType,
     Stepper,
-    StepperMotionState,
 )
 from robot.robot import FirmwareState, Robot
 
@@ -61,53 +67,46 @@ PAN_ACCEL    = 400    # steps/s^2
 TILT_MAX_VEL  = 600
 TILT_ACCEL    = 300
 
-AIM_TIMEOUT_S  = 10.0   # max seconds to wait for both steppers to reach target
-AIM_POLL_S     = 0.02   # polling interval while waiting for moves to finish
+AIM_TIMEOUT_S  = 10.0   # max seconds per stepper move
+DWELL_S        = 3.0    # seconds to hold each position before moving to the next
 
 
 # ---------------------------------------------------------------------------
-# Pixel -> step conversion  (tune these two constants experimentally)
+# Grid positions (steps from startup origin) -- tune to match your build
 # ---------------------------------------------------------------------------
 
-IMG_W = 640
-IMG_H = 480
-HFOV  = 62.2   # degrees, horizontal field of view (Pi Camera 3 default)
-VFOV  = 48.8   # degrees, vertical field of view
-
-# Steps per degree of physical rotation -- measure and adjust until accurate.
-# To calibrate: command 1000 steps, measure actual degrees rotated,
-# then set STEPS_PER_DEG = 1000 / measured_degrees.
-PAN_STEPS_PER_DEG  = 10.0
-TILT_STEPS_PER_DEG = 10.0
-
-
-def pixels_to_steps(px: float, py: float) -> tuple[int, int]:
-    """Convert pixel coords to absolute pan/tilt steps from origin (center frame = 0,0)."""
-    pan_deg  = (px - IMG_W / 2) / IMG_W  * HFOV
-    tilt_deg = (py - IMG_H / 2) / IMG_H  * VFOV
-    return int(pan_deg * PAN_STEPS_PER_DEG), int(tilt_deg * TILT_STEPS_PER_DEG)
+PAN_L, PAN_C, PAN_R    = -400,   0, 400   # pan columns: left / center / right
+TILT_U, TILT_C, TILT_D =  200,   0, -200  # tilt rows:   up   / center / down
 
 
 # ---------------------------------------------------------------------------
-# Target table -- define in pixel coords; steps are computed automatically.
-# Center of frame is (320, 240).  Right/down are positive.
+# Movement sequence -- snake scan across the grid.
+# Pan moves to each column; tilt direction reverses each column so the
+# mechanism never backtracks (boustrophedon / S-curve pattern).
+#
+#   LEFT col      CENTER col    RIGHT col
+#     UP      →                →  UP
+#     CTR         (reversed)      CTR
+#     DOWN    →   DOWN            DOWN
+#                 CTR
+#                 UP        →
 # ---------------------------------------------------------------------------
 
-class Target(NamedTuple):
-    label: str
-    pan:   int   # absolute steps from startup origin
-    tilt:  int   # absolute steps from startup origin
-
-    @staticmethod
-    def from_pixels(label: str, px: float, py: float) -> "Target":
-        pan, tilt = pixels_to_steps(px, py)
-        return Target(label, pan, tilt)
-
-
-TARGETS: list[Target] = [
-    Target.from_pixels("CENTER",     px=320, py=240),   # center of frame
-    Target.from_pixels("LEFT-LOW",   px=100, py=380),
-    Target.from_pixels("RIGHT-HIGH", px=540, py=100),
+SEQUENCE: list[Target] = [
+    # Left column — tilt top → bottom
+    Target("L_UP",    PAN_L, TILT_U),
+    Target("L_CTR",   PAN_L, TILT_C),
+    Target("L_DOWN",  PAN_L, TILT_D),
+    # Center column — tilt bottom → top (snake reversal)
+    Target("C_DOWN",  PAN_C, TILT_D),
+    Target("C_CTR",   PAN_C, TILT_C),
+    Target("C_UP",    PAN_C, TILT_U),
+    # Right column — tilt top → bottom (snake reversal)
+    Target("R_UP",    PAN_R, TILT_U),
+    Target("R_CTR",   PAN_R, TILT_C),
+    Target("R_DOWN",  PAN_R, TILT_D),
+    # Return home
+    Target("HOME",    PAN_C, TILT_C),
 ]
 
 
@@ -136,54 +135,53 @@ def show_running_leds(robot: Robot) -> None:
     robot.set_led(LED.GREEN, 200)
 
 
-def _stepper_index(stepper: Stepper) -> int:
-    """Convert Stepper enum to zero-based index into StepStateAll.steppers."""
-    return int(stepper) - 1
-
-
-def _both_idle(robot: Robot) -> bool:
-    """Return True when both pan and tilt steppers report IDLE motion_state."""
-    state = robot.get_step_state()
-    if state is None:
-        return False
-    pan_state  = state.steppers[_stepper_index(PAN_STEPPER)].motion_state
-    tilt_state = state.steppers[_stepper_index(TILT_STEPPER)].motion_state
-    return (pan_state == StepperMotionState.IDLE and
-            tilt_state == StepperMotionState.IDLE)
-
-
 def setup_steppers(robot: Robot) -> None:
     """Enable both steppers and apply motion config. Current position becomes (0, 0)."""
+    global _current_pan, _current_tilt
     robot.step_set_config(PAN_STEPPER,  max_velocity=PAN_MAX_VEL,  acceleration=PAN_ACCEL)
     robot.step_set_config(TILT_STEPPER, max_velocity=TILT_MAX_VEL, acceleration=TILT_ACCEL)
     robot.step_enable(PAN_STEPPER)
     robot.step_enable(TILT_STEPPER)
+    _current_pan = _current_tilt = 0
+
+
+_current_pan:  int = 0
+_current_tilt: int = 0
 
 
 def aim_at(robot: Robot, target: Target) -> bool:
-    """
-    Move pan and tilt simultaneously to target's absolute step positions.
-
-    Issues both moves non-blocking so they run in parallel, then polls
-    StepperMotionState until both report IDLE (or timeout expires).
-    Returns True on success, False on timeout.
-    """
+    """Move pan then tilt to target's absolute step positions (blocking)."""
+    global _current_pan, _current_tilt
     print(f"[AIM] -> {target.label}  pan={target.pan}  tilt={target.tilt}")
 
-    # Start both moves at the same time (non-blocking)
-    robot.step_move(PAN_STEPPER,  steps=target.pan,  move_type=StepMoveType.ABSOLUTE, blocking=False)
-    robot.step_move(TILT_STEPPER, steps=target.tilt, move_type=StepMoveType.ABSOLUTE, blocking=False)
+    if target.pan != _current_pan:
+        ok_pan = robot.step_move(
+            PAN_STEPPER,
+            steps=target.pan,
+            move_type=StepMoveType.ABSOLUTE,
+            blocking=True,
+            timeout=AIM_TIMEOUT_S,
+        )
+        if not ok_pan:
+            print(f"[warn] pan timed out before reaching {target.label}")
+            return False
+        _current_pan = target.pan
 
-    # Poll until both are idle or timeout
-    deadline = time.monotonic() + AIM_TIMEOUT_S
-    while time.monotonic() < deadline:
-        if _both_idle(robot):
-            print(f"[AIM] aimed at {target.label}")
-            return True
-        time.sleep(AIM_POLL_S)
+    if target.tilt != _current_tilt:
+        ok_tilt = robot.step_move(
+            TILT_STEPPER,
+            steps=target.tilt,
+            move_type=StepMoveType.ABSOLUTE,
+            blocking=True,
+            timeout=AIM_TIMEOUT_S,
+        )
+        if not ok_tilt:
+            print(f"[warn] tilt timed out before reaching {target.label}")
+            return False
+        _current_tilt = target.tilt
 
-    print(f"[warn] aim timed out before reaching {target.label}")
-    return False
+    print(f"[AIM] aimed at {target.label}")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +192,6 @@ def run(robot: Robot) -> None:
     configure_robot(robot)
 
     state = "INIT"
-    target_index = 0
 
     period    = 1.0 / float(DEFAULT_FSM_HZ)
     next_tick = time.monotonic()
@@ -204,9 +201,7 @@ def run(robot: Robot) -> None:
             start_robot(robot)
             setup_steppers(robot)
             show_idle_leds(robot)
-            print("[FSM] IDLE -- BTN_1 cycles targets (current position is origin)")
-            for i, t in enumerate(TARGETS):
-                print(f"  [{i}] {t.label}  pan={t.pan}  tilt={t.tilt}")
+            print("[FSM] IDLE -- press BTN_1 to run the aim sequence")
             state = "IDLE"
 
         elif state == "IDLE":
@@ -215,12 +210,12 @@ def run(robot: Robot) -> None:
                 state = "AIM"
 
         elif state == "AIM":
-            target = TARGETS[target_index]
-            aim_at(robot, target)
-            target_index = (target_index + 1) % len(TARGETS)
+            for target in SEQUENCE:                      # line A: loop over every position
+                aim_at(robot, target)                    # line B: move to position (blocking)
+                print(f"[FSM] holding {target.label} for {DWELL_S}s")
+                time.sleep(DWELL_S)                      # line C: wait before next move
             show_idle_leds(robot)
-            next_target = TARGETS[target_index]
-            print(f"[FSM] IDLE -- at {target.label}, BTN_1 -> {next_target.label}")
+            print("[FSM] IDLE -- sequence complete, press BTN_1 to repeat")
             state = "IDLE"
 
         next_tick += period
