@@ -49,8 +49,8 @@ def main(args=None) -> None:
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
 
     try:
-        #from ros2_ws.src.robot.robot.main_working import run
-        from robot.main import run
+        #from robot.main import run          # zombie sweep (manipulation)
+        from robot.main_drive import run    # boustrophedon path + lidar/GPS
 
         run(node.robot)
     except KeyboardInterrupt:

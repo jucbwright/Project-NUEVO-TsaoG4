@@ -25,6 +25,16 @@ def generate_launch_description():
             }],
         ),
         Node(
+            package="sensors",
+            executable="robot_gps",
+            name="robot_gps",
+            output="screen",
+            parameters=[{
+                "jetson_ip":   "192.168.8.163",
+                "jetson_port": 7777,
+            }],
+        ),
+        Node(
             package="robot",
             executable="robot",
             name="robot",
