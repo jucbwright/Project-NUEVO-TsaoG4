@@ -56,6 +56,30 @@ def classify_person_face_lighting(person_crop) -> tuple[str, float]:
         return "bright", min(1.0, (brightness - 0.75) / 0.25)
     return "normal", max(0.0, 1.0 - (abs(brightness - 0.5) / 0.25))
 
+def classify_person_color(person_crop) -> tuple[str, float]:
+    """Check if the person crop is predominantly green (zombie test)."""
+    import cv2
+    import numpy as np
+    if person_crop.size == 0:
+        return "unknown", 0.0
+
+    blurred = cv2.GaussianBlur(person_crop, (5, 5), 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+
+    green_low  = np.array([40,  80,  80])
+    green_high = np.array([80, 255, 255])
+    mask = cv2.inRange(hsv, green_low, green_high)
+
+    green_pixels = float(cv2.countNonZero(mask))
+    total_pixels = float(max(1, person_crop.shape[0] * person_crop.shape[1]))
+    green_ratio  = green_pixels / total_pixels
+
+    print(f"[COLOR] person green_ratio={green_ratio:.3f}")
+
+    # Threshold: at least 10% of the bounding box must be green
+    if green_ratio >= 0.10:
+        return "green", min(1.0, green_ratio / 0.5)
+    return "other", 0.0
 
 class VisionNode(Node):
     def __init__(self) -> None:
@@ -231,6 +255,8 @@ class VisionNode(Node):
                         person_crop = object_crop
                         face_lighting_label, face_lighting_score = classify_person_face_lighting(person_crop)
                         detection.add_attribute("face_lighting", face_lighting_label, face_lighting_score)
+                        color_label, color_score = classify_person_color(person_crop)
+                        detection.add_attribute("color", color_label, color_score)
                 
                 all_detections = yolo_detections + yellow_block_detections
 

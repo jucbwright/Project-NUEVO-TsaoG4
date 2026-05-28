@@ -78,3 +78,28 @@ def yellow_detection_score(contour_area: float, min_area_px: int, fill_ratio: fl
     area_score = min(1.0, contour_area / float(max(1, min_area_px * 4)))
     score = 0.55 * area_score + 0.45 * max(0.0, min(1.0, fill_ratio))
     return max(0.0, min(1.0, score))
+
+
+def classify_person_color(person_crop: np.ndarray) -> tuple[str, float]:
+    """
+    Check if a person crop is predominantly green.
+    Returns ("green", score) or ("not_green", 0.0).
+    25% green pixels threshold — tunable for your lighting conditions.
+    """
+    if person_crop.size == 0:
+        return "unknown", 0.0
+
+    blurred = cv2.GaussianBlur(person_crop, (5, 5), 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+
+    green_hsv_low  = (40, 60, 60)
+    green_hsv_high = (80, 255, 255)
+    mask = cv2.inRange(hsv, green_hsv_low, green_hsv_high)
+
+    green_pixels  = float(np.count_nonzero(mask))
+    total_pixels  = float(max(1, mask.shape[0] * mask.shape[1]))
+    green_fraction = green_pixels / total_pixels
+
+    if green_fraction >= 0.25:
+        return "green", min(1.0, green_fraction * 3.0)
+    return "not_green", 0.0

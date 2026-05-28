@@ -132,8 +132,13 @@ entering:
 git commit -am "your commit message here"
 ```
 
+```
+./ros2_ws/docker/enter_ros2.sh --build
+```
+
 This builds the image, starts the container, and drops you into a sourced ROS2
 shell. Subsequent entries (no image changes) do not need `--build`:
+
 
 ```bash
 ./ros2_ws/docker/enter_ros2.sh

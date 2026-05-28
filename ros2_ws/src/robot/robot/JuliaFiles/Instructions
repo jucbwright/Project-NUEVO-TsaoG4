@@ -1,0 +1,58 @@
+ To apply the vision changes, rebuild inside the container:
+  cd /ros2_ws && colcon build --packages-select vision && ros2 launch
+  vision vision_debug.launch.py
+
+  The main.py fix takes effect immediately on the next ros2 run robot
+  robot — no rebuild needed for that package since it's pure Python.
+
+  Tuning note: The 25% threshold in classify_person_color is a starting
+   point. If you're getting false positives (green plants/walls
+  triggering it) raise it toward 0.35. If it's missing clearly green
+  people, lower it toward 0.15.
+
+✻ Crunched for 1m 5s
+
+※ recap: We're integrating green-person detection with the stepper 
+  pan/tilt grid sweep. Three fixes were applied; rebuild the vision 
+  package inside the container with colcon build --packages-select 
+  vision to activate them. (disable recaps in /config)
+
+❯ Which commands do I run to test this and in which terminals?         
+  ⎿  ⧉ Selected 1 lines from docs/lab_manual/Notes_byJulia/Common 
+     commands in Visual Studio Code
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+● Here's the exact sequence — you need 3 terminals, all from the repo
+  root (~/Project-NUEVO-TsaoG4):
+
+  ---
+  Terminal 1 — rebuild vision, then launch vision node
+  ./ros2_ws/docker/enter_ros2.sh
+  Once inside the container:
+  colcon build --packages-select vision
+  ros2 launch vision vision_debug.launch.py
+  Leave this running. You'll see the yellow_block= log lines — that
+  confirms vision is live.
+
+  ---
+  Terminal 2 — run the robot node
+  ./ros2_ws/docker/enter_ros2.sh
+  Once inside:
+  ros2 run robot robot
+  This loads main.py. It will print IDLE -- press BTN_1 to start zombie
+   sweep.
+
+  ---
+  Terminal 3 — watch detections (optional but useful for debugging)
+  ./ros2_ws/docker/enter_ros2.sh
+  Once inside:
+  ros2 topic echo /vision/detections
+  When a green person is in frame you should see a detection with
+  attribute_names: ['face_lighting', 'color'] and attribute_values: 
+  ['...', 'green'].
+
+  ---
+  Then: press BTN_1 on the robot → steppers sweep the grid → when a
+  green-colored person appears in the camera frame the robot prints
+  [ZOMBIE] Detected and locks the pan/tilt onto them.
