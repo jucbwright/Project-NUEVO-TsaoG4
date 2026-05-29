@@ -11,11 +11,9 @@ Usage (inside the Jetson Docker container):
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -41,26 +39,9 @@ def generate_launch_description() -> LaunchDescription:
         description="TCP port for the robot push server (NAT-friendly delivery).",
     )
 
-    # ── RealSense camera driver ───────────────────────────────────────────
-    realsense_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            get_package_share_directory("realsense2_camera"),
-            "/launch/rs_launch.py",
-        ]),
-        launch_arguments={
-            "enable_color": "true",
-            "enable_depth": "true",
-            "enable_infra1": "false",
-            "enable_infra2": "false",
-            # Align depth to colour frame so pixel coordinates match.
-            "align_depth.enable": "true",
-            # Publish at camera native rate (typically 30 Hz).
-            "rgb_camera.color_profile": "640x480x30",
-            "depth_module.depth_profile": "640x480x30",
-        }.items(),
-    )
-
     # ── Ground localizer node ─────────────────────────────────────────────
+    # NOTE: realsense2_camera must be started separately before launching this.
+    # Run: ros2 launch realsense2_camera rs_launch.py
     localizer_node = Node(
         package="global_gps",
         executable="ground_localizer",
@@ -79,6 +60,5 @@ def generate_launch_description() -> LaunchDescription:
         corner_ids_arg,
         rover_ids_arg,
         tcp_port_arg,
-        realsense_launch,
         localizer_node,
     ])

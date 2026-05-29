@@ -1,6 +1,5 @@
  To apply the vision changes, rebuild inside the container:
-  cd /ros2_ws && colcon build --packages-select vision && ros2 launch
-  vision vision_debug.launch.py
+  ros2 launch vision vision_debug.launch.py
 
   The main.py fix takes effect immediately on the next ros2 run robot
   robot — no rebuild needed for that package since it's pure Python.
