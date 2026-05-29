@@ -1,7 +1,11 @@
 """
-Boustrophedon path sweep with APF obstacle avoidance and lidar/GPS fusion.
+Boustrophedon path sweep with APF obstacle avoidance and LiDAR.
 
-Press BTN_1 to start the path, BTN_2 to cancel.
+Combines:
+  - pure_pursuit.py  : path structure and waypoints
+  - obstacle_avoidance_apf.py : LiDAR setup and APF obstacle avoidance tuning
+
+Press BTN_1 to start, BTN_2 to cancel.
 """
 
 from __future__ import annotations
@@ -33,8 +37,11 @@ from robot.hardware_map import (
 from robot.robot import FirmwareState, Robot
 from robot.util import densify_polyline
 
-ENABLE_LIDAR = False
-ENABLE_GPS   = False
+# ---------------------------------------------------------------------------
+# Sensor toggles
+# ---------------------------------------------------------------------------
+ENABLE_LIDAR = True
+ENABLE_GPS   = True
 
 TAG_ID = 14
 
@@ -44,74 +51,76 @@ GPS_TANGENT_ALPHA               = 0.15
 GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
 
 # ---------------------------------------------------------------------------
-# Path configuration
+# Path — boustrophedon lawnmower (from pure_pursuit.py blueprint)
 # ---------------------------------------------------------------------------
-tile = 610.0  # mm (standard tile length)
+tile = 610.0
+# Course layout (robot starts at origin facing north = +Y):
+#   Row 1: 6 tiles north  at x=0        (clear)
+#   Row 2: 7 tiles south  at x=tile     (ramp at x~0.8-2.4, y~0-1.5 — detour left)
+#   Row 3: 7 tiles north  at x=tile*2   (cones — APF handles dynamically)
+#   Row 4: 5 tiles south  at x=tile*3   (clear)
 PATH_CONTROL_POINTS = [
-    # Straight 1 — right along row 0
-    (tile*0,    tile*0),
-    (tile*0,    tile*6),
+    # Row 1: north 6 tiles
+    (tile*0,     tile*0),
+    (tile*0,     tile*6),
 
-    # Turn 1 — down from (0,6) to (1,6)
-    (tile*0.33, tile*6),
-    (tile*0.66, tile*6),
-    (tile*1,    tile*6),
+    # Turn: east 1 tile
+    (tile*0.33,  tile*6),
+    (tile*0.66,  tile*6),
+    (tile*1,     tile*6),
 
-    # Straight 2 — left along row 1
-    (tile*1,    tile*5),
-    (tile*1,    tile*4),
-    (tile*1,    tile*3),
-    (tile*1,    tile*2),
-    (tile*1,    tile*1),
-    (tile*1,    tile*0),
+    # Row 2: south 7 tiles — ramp at y=tile*2–tile*4, detour left
+    (tile*1,     tile*4.5),   # descend freely, approaching ramp top
+    (tile*0.3,   tile*4),     # veer left before ramp (ramp spans y=tile*2–4)
+    (tile*0.3,   tile*3),     # continue left of ramp
+    (tile*0.3,   tile*2),     # still left of ramp
+    (tile*0.3,   tile*1.5),   # clear of ramp bottom
+    (tile*1,     tile*1),     # rejoin column below ramp
+    (tile*1,    -tile*1),     # continue to end of row 2
 
-    # Turn 2 — down from (1,0) to (2,0)
-    (tile*1.33, tile*0),
-    (tile*1.66, tile*0),
-    (tile*2,    tile*0),
+    # Turn: east 1 tile at bottom
+    (tile*1.33, -tile*1),
+    (tile*1.66, -tile*1),
+    (tile*2,    -tile*1),
 
-    # Straight 3 — right along row 2
-    (tile*2,    tile*1),
-    (tile*2,    tile*2),
-    (tile*2,    tile*3),
-    (tile*2,    tile*4),
-    (tile*2,    tile*5),
-    (tile*2,    tile*6),
+    # Row 3: north 7 tiles — cones handled by APF
+    (tile*2,    -tile*0.5),
+    (tile*2,     tile*0),
+    (tile*2,     tile*3),
+    (tile*2,     tile*6),
 
-    # Turn 3 — down from (2,6) to (3,6)
-    (tile*2.33, tile*6),
-    (tile*2.66, tile*6),
-    (tile*3,    tile*6),
+    # Turn: east 1 tile
+    (tile*2.33,  tile*6),
+    (tile*2.66,  tile*6),
+    (tile*3,     tile*6),
 
-    # Straight 4 — left along row 3
-    (tile*3,    tile*5),
-    (tile*3,    tile*4),
-    (tile*3,    tile*3),
-    (tile*3,    tile*2),
-    (tile*3,    tile*1),
-    (tile*3,    tile*0),
-
-    # Turn 4 — down from (3,0) to (4,0)
-    (tile*3.33, tile*0),
-    (tile*3.66, tile*0),
-    (tile*4,    tile*0),
+    # Row 4: south 5 tiles
+    (tile*3,     tile*3),
+    (tile*3,     tile*1),
 ]
 
-LOOKAHEAD_MM           = 120.0
-ADVANCE_RADIUS_MM      = 80.0
-TOLERANCE_MM           = 25.0
-VELOCITY_MM_S          = 150.0
-MAX_ANGULAR_RAD_S      = 1.0
-APF_REPULSION_RANGE_MM = 150.0
-PATH_DENSITY_MM        = 60.0
+WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=60.0)
 
-WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, PATH_DENSITY_MM)
+# ---------------------------------------------------------------------------
+# Pure pursuit tuning (from pure_pursuit.py blueprint)
+# ---------------------------------------------------------------------------
+VELOCITY_MM_S     = 150.0
+LOOKAHEAD_MM      = 120.0
+TOLERANCE_MM      = 25.0
+ADVANCE_RADIUS_MM = 80.0
+MAX_ANGULAR_RAD_S = 1.5
+
+# ---------------------------------------------------------------------------
+# APF obstacle avoidance tuning (from obstacle_avoidance_apf.py blueprint)
+# ---------------------------------------------------------------------------
+APF_REPULSION_RANGE_MM = 300.0
+APF_REPULSION_GAIN     = 550.0
 
 STATUS_PRINT_INTERVAL_S = 0.5
 
 
 def _make_obstacle_provider(robot: Robot):
-    """Return a callback that converts world-frame obstacle tracks to robot-frame mm for APF."""
+    """Convert world-frame tracked obstacles to robot-frame mm for APF."""
     def _provider():
         tracks = robot.get_obstacle_tracks()
         if not tracks:
@@ -191,51 +200,32 @@ def show_idle_leds(robot: Robot) -> None:
     robot.set_led(LED.GREEN, 0)
 
 
-def show_running_leds(robot: Robot) -> None:
+def show_moving_leds(robot: Robot) -> None:
     robot.set_led(LED.ORANGE, 0)
     robot.set_led(LED.GREEN, 200)
 
 
-def cancel_motion(robot: Robot, handle) -> None:
-    if handle is not None:
-        handle.cancel()
-        handle.wait(timeout=1.0)
-    robot.stop()
-
-
 def print_status(robot: Robot) -> None:
+    ox, oy, otheta = robot.get_odometry_pose()
     if ENABLE_GPS and robot.has_fused_pose():
-        x, y, theta = robot.get_fused_pose()
-        label = "fused"
-    else:
-        x, y, theta = robot.get_odometry_pose()
-        label = "odom "
-
-    virtual_target  = robot.get_virtual_target()
-    obstacle_tracks = robot.get_obstacle_tracks()
-
-    if virtual_target is None:
-        vt_summary = " vt=(none)"
-    else:
-        vt_summary = f" vt=({virtual_target[0]:6.0f}, {virtual_target[1]:6.0f}) mm"
-
-    if obstacle_tracks:
-        nearest_boundary_mm = min(
-            max(
-                0.0,
-                ((float(track["x"]) - x) ** 2 + (float(track["y"]) - y) ** 2) ** 0.5
-                - float(track["radius"]),
-            )
-            for track in obstacle_tracks
+        fx, fy, ftheta = robot.get_fused_pose()
+        print(
+            f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°  |  "
+            f"fused=({fx:6.0f}, {fy:6.0f}) mm  θ_fused={ftheta:5.1f}°"
         )
-        track_summary = f" tracked={len(obstacle_tracks)} nearest_track={nearest_boundary_mm:.0f} mm"
     else:
-        track_summary = " tracked=0"
-
-    print(
-        f"  {label}=({x:6.0f}, {y:6.0f}) mm  θ={theta:5.1f}°"
-        f"{vt_summary}{track_summary}"
-    )
+        obstacle_tracks = robot.get_obstacle_tracks()
+        if obstacle_tracks:
+            nearest = min(
+                max(0.0,
+                    ((float(t["x"]) - ox) ** 2 + (float(t["y"]) - oy) ** 2) ** 0.5
+                    - float(t["radius"]))
+                for t in obstacle_tracks
+            )
+            track_summary = f"  tracked={len(obstacle_tracks)} nearest={nearest:.0f} mm"
+        else:
+            track_summary = "  tracked=0"
+        print(f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°{track_summary}")
 
 
 def start_path(robot: Robot):
@@ -247,6 +237,7 @@ def start_path(robot: Robot):
         advance_radius=ADVANCE_RADIUS_MM,
         max_angular_rad_s=MAX_ANGULAR_RAD_S,
         repulsion_range=APF_REPULSION_RANGE_MM,
+        repulsion_gain=APF_REPULSION_GAIN,
         blocking=False,
     )
 
@@ -269,31 +260,22 @@ def run(robot: Robot) -> None:
             reset_mission_pose(robot)
             show_idle_leds(robot)
             print("[FSM] IDLE — press BTN_1 to start path, BTN_2 to cancel")
-            print(f"[CFG] waypoints={len(WAYPOINTS)} velocity={VELOCITY_MM_S:.0f} mm/s "
-                  f"lookahead={LOOKAHEAD_MM:.0f} mm tolerance={TOLERANCE_MM:.0f} mm "
-                  f"advance_radius={ADVANCE_RADIUS_MM:.0f} mm "
-                  f"repulsion={APF_REPULSION_RANGE_MM:.0f} mm")
+            print(
+                f"[CFG] waypoints={len(WAYPOINTS)} velocity={VELOCITY_MM_S:.0f} mm/s "
+                f"lookahead={LOOKAHEAD_MM:.0f} mm tolerance={TOLERANCE_MM:.0f} mm "
+                f"repulsion={APF_REPULSION_RANGE_MM:.0f} mm"
+            )
             if ENABLE_LIDAR:
                 print(
-                    f"[CFG] lidar mount=({LIDAR_MOUNT_X_MM:.0f}, {LIDAR_MOUNT_Y_MM:.0f}) mm "
-                    f"theta={LIDAR_MOUNT_THETA_DEG:.1f}° filter={LIDAR_RANGE_MIN_MM:.0f}-"
-                    f"{LIDAR_RANGE_MAX_MM:.0f} mm fov={LIDAR_FOV_DEG}"
-                )
-                print(
-                    f"[CFG] tracker ttl={robot.OBSTACLE_TRACK_TTL_S:.1f}s "
-                    f"max_tracks={robot.OBSTACLE_TRACK_MAX_TRACKS}"
-                )
-            if ENABLE_GPS:
-                print(
-                    f"[CFG] gps tag_id={TAG_ID} tag_body=({TAG_BODY_OFFSET_X_MM:.0f}, "
-                    f"{TAG_BODY_OFFSET_Y_MM:.0f}) mm"
+                    f"[CFG] lidar mount=({LIDAR_MOUNT_X_MM:.0f},{LIDAR_MOUNT_Y_MM:.0f}) mm "
+                    f"filter={LIDAR_RANGE_MIN_MM:.0f}-{LIDAR_RANGE_MAX_MM:.0f} mm"
                 )
             state = "IDLE"
 
         elif state == "IDLE":
             if robot.was_button_pressed(Button.BTN_1):
                 reset_mission_pose(robot)
-                show_running_leds(robot)
+                show_moving_leds(robot)
                 drive_handle = start_path(robot)
                 last_status_print_at = now
                 print(f"[FSM] MOVING — {len(WAYPOINTS)} waypoints")
@@ -301,8 +283,11 @@ def run(robot: Robot) -> None:
 
         elif state == "MOVING":
             if robot.was_button_pressed(Button.BTN_2):
-                cancel_motion(robot, drive_handle)
-                drive_handle = None
+                if drive_handle is not None:
+                    drive_handle.cancel()
+                    drive_handle.wait(timeout=1.0)
+                    drive_handle = None
+                robot.stop()
                 show_idle_leds(robot)
                 print("[FSM] IDLE — path cancelled")
                 state = "IDLE"
@@ -311,7 +296,7 @@ def run(robot: Robot) -> None:
                     print_status(robot)
                     last_status_print_at = now
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[FSM] DONE — goal complete")
+                    print("[FSM] DONE — path complete")
                     print_status(robot)
                     drive_handle = None
                     robot.stop()

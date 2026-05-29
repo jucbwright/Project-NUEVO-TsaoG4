@@ -50,7 +50,7 @@ def main(args=None) -> None:
 
     try:
         #from robot.main import run          # zombie sweep (manipulation)
-        from robot.main_drive import run    # boustrophedon path + lidar/GPS
+        from robot.main_drive import run    # boustrophedon path + lidar obstacle avoidance
 
         run(node.robot)
     except KeyboardInterrupt:

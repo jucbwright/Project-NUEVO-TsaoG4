@@ -47,7 +47,7 @@ from robot.util import densify_polyline  # noqa: F401 - optional helper for stud
 ENABLE_LIDAR = False
 ENABLE_GPS   = False
 
-TAG_ID = -1  # IMPORTANT: set to the ArUco marker ID on your robot
+TAG_ID = 14  # IMPORTANT: set to the ArUco marker ID on your robot
 
 
 # ---------------------------------------------------------------------------
