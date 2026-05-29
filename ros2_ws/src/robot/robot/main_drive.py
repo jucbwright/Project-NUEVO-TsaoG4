@@ -33,8 +33,8 @@ from robot.hardware_map import (
 from robot.robot import FirmwareState, Robot
 from robot.util import densify_polyline
 
-ENABLE_LIDAR = True
-ENABLE_GPS   = True
+ENABLE_LIDAR = False
+ENABLE_GPS   = False
 
 TAG_ID = 14
 
