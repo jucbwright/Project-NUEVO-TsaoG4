@@ -40,7 +40,7 @@ from robot.util import densify_polyline
 # ---------------------------------------------------------------------------
 # Sensor toggles
 # ---------------------------------------------------------------------------
-ENABLE_LIDAR = False
+ENABLE_LIDAR = True
 ENABLE_GPS   = False
 
 TAG_ID = 14
@@ -57,14 +57,33 @@ tile = 610.0
 # Straight line test — 3 tiles forward
 # INITIAL_THETA_DEG=180 means robot faces south (-Y), so path goes south
 PATH_CONTROL_POINTS = [
-    # Straight: 5.5 tiles north
+    # ── Start Location ────────────────────────────────────────────────────
     (0,           0),
-    (0,           tile*5.5),
 
-    # Turn: arc right over 1.5 tiles, shifting 1 tile east
-    (tile*0.33,   tile*6),
-    (tile*0.66,   tile*6.5),
-    (tile*1,      tile*7),
+    # ── Left side going north — detour right of ramp (x≈0.5-1.5, y≈1.5-3) ─
+    (0,           tile*1.2),        # approach ramp
+    (tile*2,      tile*2),          # swing right of ramp
+    (tile*2,      tile*3),          # continue right of ramp
+    (tile*0.5,    tile*3.5),        # rejoin left side above ramp
+
+    # ── Sec. 1 Checkpoint — top-left ──────────────────────────────────────
+    (0,           tile*4.5),
+
+    # ── Across top through obstacle course → Sec. 3 Checkpoint ───────────
+    (tile*1,      tile*4.5),
+    (tile*2,      tile*4.5),
+    (tile*3,      tile*4.5),        # Sec. 3 Checkpoint (top-right)
+
+    # ── Down right side through speed bumps ──────────────────────────────
+    (tile*3,      tile*3),
+    (tile*3,      tile*2),
+    (tile*3,      tile*1),
+
+    # ── Sec. 2 Checkpoint / Stop Sign ─────────────────────────────────────
+    (tile*3,      tile*0.5),
+
+    # ── Finish / Manipulation Task Region ─────────────────────────────────
+    (tile*4,      tile*0.5),
 ]
 
 WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=60.0)
