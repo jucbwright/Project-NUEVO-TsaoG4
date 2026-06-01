@@ -58,8 +58,8 @@ TILT_STEPPER = Stepper.STEPPER_2
 PAN_MAX_VEL  = 800    # steps/s
 PAN_ACCEL    = 400    # steps/s^2
 
-TILT_MAX_VEL = 600
-TILT_ACCEL   = 300
+TILT_MAX_VEL = 300
+TILT_ACCEL   = 150
 
 AIM_TIMEOUT_S = 10.0   # max seconds per stepper move
 DWELL_S       = 3.0    # seconds to hold each position before moving to the next
@@ -69,8 +69,8 @@ DWELL_S       = 3.0    # seconds to hold each position before moving to the next
 # Grid positions (steps from startup origin) -- tune to match your build
 # ---------------------------------------------------------------------------
 
-PAN_L, PAN_C, PAN_R    = -400,   0,  400   # pan columns: left / center / right
-TILT_U, TILT_C, TILT_D =  200,   0, -200   # tilt rows:   up   / center / down
+PAN_L, PAN_C, PAN_R    = -200,   0,  200   # pan columns: left / center / right
+TILT_U, TILT_C, TILT_D =  50,   0, -50  # tilt rows:   up   / center / down
 
 
 # ---------------------------------------------------------------------------
