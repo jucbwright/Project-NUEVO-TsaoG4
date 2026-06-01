@@ -57,33 +57,53 @@ tile = 610.0
 # Straight line test — 3 tiles forward
 # INITIAL_THETA_DEG=180 means robot faces south (-Y), so path goes south
 PATH_CONTROL_POINTS = [
-    # ── Start Location ────────────────────────────────────────────────────
-    (0,           0),
+    # Straight 1 — right along row 0
+    (tile*0,    tile*0),
+    (tile*0,    tile*6),
 
-    # ── Left side going north — detour right of ramp (x≈0.5-1.5, y≈1.5-3) ─
-    (0,           tile*1.2),        # approach ramp
-    (tile*2,      tile*2),          # swing right of ramp
-    (tile*2,      tile*3),          # continue right of ramp
-    (tile*0.5,    tile*3.5),        # rejoin left side above ramp
+    # Turn 1 — down from (0,6) to (1,6)
+    (tile*0.33, tile*6),
+    (tile*0.66, tile*6),
+    (tile*1,    tile*6),
 
-    # ── Sec. 1 Checkpoint — top-left ──────────────────────────────────────
-    (0,           tile*4.5),
+    # Straight 2 — left along row 1
+    (tile*1,    tile*5),
+    (tile*1,    tile*4),
+    (tile*1,    tile*3),
+    (tile*1,    tile*2),
+    (tile*1,    tile*1),
 
-    # ── Across top through obstacle course → Sec. 3 Checkpoint ───────────
-    (tile*1,      tile*4.5),
-    (tile*2,      tile*4.5),
-    (tile*3,      tile*4.5),        # Sec. 3 Checkpoint (top-right)
+    # Turn 2 — down from (1,1) to (2,1)
+    (tile*1.33, tile*1),
+    (tile*1.66, tile*1),
+    (tile*2,    tile*1),
 
-    # ── Down right side through speed bumps ──────────────────────────────
-    (tile*3,      tile*3),
-    (tile*3,      tile*2),
-    (tile*3,      tile*1),
+    # Straight 3
+    (tile*2,    tile*2),
+    (tile*2,    tile*3),
+    (tile*2,    tile*4),
+    (tile*2,    tile*5),
+    (tile*2,    tile*6),
 
-    # ── Sec. 2 Checkpoint / Stop Sign ─────────────────────────────────────
-    (tile*3,      tile*0.5),
+    # Turn 3 — down from (2,6) to (3,6)
+    (tile*2.33, tile*6),
+    (tile*2.66, tile*6),
+    (tile*3,    tile*6),
 
-    # ── Finish / Manipulation Task Region ─────────────────────────────────
-    (tile*4,      tile*0.5),
+    # Straight 4 — left along row 3
+    (tile*3,    tile*5),
+    (tile*3,    tile*4),
+    (tile*3,    tile*3),
+    (tile*3,    tile*2),
+    (tile*3,    tile*1),
+
+    # Turn 4 — down from (3,1) to (4,1)
+    (tile*3.33, tile*1),
+    (tile*3.66, tile*1),
+    (tile*4,    tile*1),
+
+    # Final straight
+    (tile*4,    tile*0),
 ]
 
 WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=60.0)
@@ -92,7 +112,7 @@ WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=60.0)
 # Pure pursuit tuning (from pure_pursuit.py blueprint)
 # ---------------------------------------------------------------------------
 VELOCITY_MM_S     = 180.0
-LOOKAHEAD_MM      = 140.0
+LOOKAHEAD_MM      = 250.0
 TOLERANCE_MM      = 25.0
 ADVANCE_RADIUS_MM = 80.0
 MAX_ANGULAR_RAD_S = 1.5
@@ -100,8 +120,8 @@ MAX_ANGULAR_RAD_S = 1.5
 # ---------------------------------------------------------------------------
 # APF obstacle avoidance tuning (from obstacle_avoidance_apf.py blueprint)
 # ---------------------------------------------------------------------------
-APF_REPULSION_RANGE_MM = 300.0
-APF_REPULSION_GAIN     = 550.0
+APF_REPULSION_RANGE_MM = 150.0
+APF_REPULSION_GAIN     = 200.0
 
 STATUS_PRINT_INTERVAL_S = 0.5
 
