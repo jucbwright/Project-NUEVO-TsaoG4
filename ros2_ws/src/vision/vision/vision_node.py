@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import cv2
+import numpy as np
 from pathlib import Path
 import time
 
@@ -17,7 +19,7 @@ from vision.model_utils import (
     resolve_model_path,
 )
 from vision.rule_based_detection import (
-    detect_yellow_block,
+    detect_zombie_green,
 )
 from vision.stop_sign import classify_stop_sign_visibility
 from vision.timing_utils import FixedRateScheduler
@@ -58,16 +60,16 @@ def classify_person_face_lighting(person_crop) -> tuple[str, float]:
 
 def classify_person_color(person_crop) -> tuple[str, float]:
     """Check if the person crop is predominantly green (zombie test)."""
-    import cv2
-    import numpy as np
     if person_crop.size == 0:
         return "unknown", 0.0
 
     blurred = cv2.GaussianBlur(person_crop, (5, 5), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
-    green_low  = np.array([40,  80,  80])
-    green_high = np.array([80, 255, 255])
+    # Narrow hue + high saturation floor to target vivid cartoon green while
+    # rejecting the muted teal classroom walls (high H, low S) and blue clothing.
+    green_low  = np.array([45, 120,  60])
+    green_high = np.array([75, 255, 255])
     mask = cv2.inRange(hsv, green_low, green_high)
 
     green_pixels = float(cv2.countNonZero(mask))
@@ -76,8 +78,7 @@ def classify_person_color(person_crop) -> tuple[str, float]:
 
     print(f"[COLOR] person green_ratio={green_ratio:.3f}")
 
-    # Threshold: at least 10% of the bounding box must be green
-    if green_ratio >= 0.10:
+    if green_ratio >= 0.25:
         return "green", min(1.0, green_ratio / 0.5)
     return "other", 0.0
 
@@ -187,8 +188,8 @@ class VisionNode(Node):
     def _infer_yolo_detections(self, frame) -> list[DetectedObject]:
         return self._detector.predict(frame)
 
-    def _detect_yellow_block(self, frame):
-        return detect_yellow_block(frame)
+    def _detect_zombie_green(self, frame):
+        return detect_zombie_green(frame)
 
     def _build_detection_msg(self, detected_object: DetectedObject) -> VisionDetection:
         detection = VisionDetection()
@@ -241,7 +242,7 @@ class VisionNode(Node):
             inference_start = time.monotonic()
             try:
                 yolo_detections = self._infer_yolo_detections(frame)
-                yellow_block_detections, yellow_block_overlays = self._detect_yellow_block(frame)
+                zombie_green_detections, zombie_green_overlays = self._detect_zombie_green(frame)
                 
                 for detection in yolo_detections:
                     object_crop = frame[
@@ -268,7 +269,20 @@ class VisionNode(Node):
                         color_label, color_score = classify_person_color(person_crop)
                         detection.add_attribute("color", color_label, color_score)
                 
-                all_detections = yolo_detections + yellow_block_detections
+                # Keep non-person detections as-is; for persons, only keep green
+                # ones (zombie) and rename them so downstream code can match directly.
+                filtered_yolo: list[DetectedObject] = []
+                for d in yolo_detections:
+                    if d.class_name == "person":
+                        is_green = any(
+                            a.name == "color" and a.value == "green"
+                            for a in d.attributes
+                        )
+                        if not is_green:
+                            continue
+                        d.class_name = "zombie"
+                    filtered_yolo.append(d)
+                all_detections = filtered_yolo + zombie_green_detections
 
                 message = self._build_detection_array_msg(
                     capture_stamp=capture_stamp,
@@ -280,15 +294,15 @@ class VisionNode(Node):
                 self._debug_writer.maybe_write(
                     frame_bgr=frame,
                     detected_objects=all_detections,
-                    debug_overlays=yellow_block_overlays,
+                    debug_overlays=zombie_green_overlays,
                 )
                 yolo_count = len(yolo_detections)
-                yellow_block_count = len(yellow_block_detections)
+                zombie_green_count = len(zombie_green_detections)
                 detection_count = len(message.detections)
             except Exception as exc:
                 self.get_logger().error(f"Vision inference failed for one frame: {exc}")
                 yolo_count = 0
-                yellow_block_count = 0
+                zombie_green_count = 0
                 detection_count = 0
             inference_ms = (time.monotonic() - inference_start) * 1000.0
 
@@ -296,7 +310,7 @@ class VisionNode(Node):
             if now - self._last_loop_summary >= self._log_interval_sec:
                 self._last_loop_summary = now
                 self.get_logger().info(
-                    "Vision frame %dx%d total=%.1fms preprocess=%.1fms ncnn=%.1fms postprocess=%.1fms yolo=%d yellow_block=%d total=%d target_rate=%.1fHz"
+                    "Vision frame %dx%d total=%.1fms preprocess=%.1fms ncnn=%.1fms postprocess=%.1fms yolo=%d zombie_green=%d total=%d target_rate=%.1fHz"
                     % (
                         frame.shape[1],
                         frame.shape[0],
@@ -305,7 +319,7 @@ class VisionNode(Node):
                         self._detector.last_inference_ms,
                         self._detector.last_postprocess_ms,
                         yolo_count,
-                        yellow_block_count,
+                        zombie_green_count,
                         detection_count,
                         self._process_rate_hz,
                     )

@@ -46,7 +46,6 @@ from robot.hardware_map import (
     WHEEL_DIAMETER,
 )
 from robot.robot import FirmwareState, Robot
-from robot.util import densify_polyline
 
 # Shared drive-base and lidar/GPS hardware calibration lives in
 # robot/hardware_map.py. If you need to change wheel geometry, wheel motors,
@@ -136,8 +135,6 @@ PATH_CONTROL_POINTS = [
     (tile*4,    tile*0),
 ]
 
-LOOKAHEAD_MM       = 120.0
-TOLERANCE_MM       = 25.0
 GOAL_MM = (610.0, 610.0*5)
 VELOCITY_MM_S = 150.0
 TOLERANCE_MM = 50.0
@@ -203,10 +200,10 @@ def configure_robot(robot: Robot) -> None:
         robot.set_position_fusion_alpha(GPS_POSITION_ALPHA)
         print(f"[sensor] GPS enabled — tracking ArUco tag {TAG_ID}")
         if ENABLE_GPS_TANGENT_HEADING:
-        robot.enable_gps_tangent_heading(
-            alpha=GPS_TANGENT_ALPHA,
-            min_displacement_mm=GPS_TANGENT_MIN_DISPLACEMENT_MM,
-        )
+            robot.enable_gps_tangent_heading(
+                alpha=GPS_TANGENT_ALPHA,
+                min_displacement_mm=GPS_TANGENT_MIN_DISPLACEMENT_MM,
+            )
 
 
 

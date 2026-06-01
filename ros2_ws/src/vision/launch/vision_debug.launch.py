@@ -7,12 +7,12 @@ COMMON_PARAMETERS = {
     "camera_width": 640,
     "camera_height": 480,
     "camera_fps": 15.0,
-    "process_rate_hz": 4.0,
+    "process_rate_hz": 8.0,
     "model_imgsz": 416,
     "confidence_threshold": 0.25,
     "iou_threshold": 0.7,
     "max_detections": 20,
-    "ncnn_threads": 4,
+    "ncnn_threads": 1,
 }
 
 
@@ -28,13 +28,13 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[
                     COMMON_PARAMETERS,
                     {
-                        "image_source_dir": "/ros2_ws/src/vision",
                         "debug_save_enabled": True,
                         "debug_output_dir": "/runtime_output/vision",
-                        "debug_save_rate_hz": 1.0,
+                        "debug_save_rate_hz": 4.0,
                         "debug_save_only_on_detection": False,
                         "debug_save_latest": True,
                         "debug_save_timestamped": False,
+                        "debug_max_timestamped_images": 0,
                     },
                 ],
             )

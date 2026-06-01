@@ -49,8 +49,8 @@ def main(args=None) -> None:
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
 
     try:
-#from robot.main import run          # zombie sweep
-        from robot.main_drive import run    # boustrophedon path + lidar
+        from robot.main import run          # zombie sweep
+#        from robot.main_drive import run    # boustrophedon path + lidar
 
         run(node.robot)
     except KeyboardInterrupt:

@@ -103,9 +103,10 @@ class YoloNcnnDetector:
         with self._net.create_extractor() as extractor:
             extractor.input(self.input_name, input_tensor)
             _, output = extractor.extract(self.output_name)
+            output_array = np.array(output)  # copy before extractor releases its buffers
 
         postprocess_start = time.monotonic()
-        predictions = _normalize_output(np.array(output), class_count=self.class_count)
+        predictions = _normalize_output(output_array, class_count=self.class_count)
         detected_objects = _decode_predictions(
             predictions=predictions,
             names=self.names,

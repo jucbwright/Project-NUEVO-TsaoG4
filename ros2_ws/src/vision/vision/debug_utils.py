@@ -170,6 +170,11 @@ def _draw_label(image, text: str, x: int, y: int, color) -> None:
 
 
 def _class_color(class_name: str) -> tuple[int, int, int]:
+    _EXPLICIT: dict[str, tuple[int, int, int]] = {
+        "zombie": (30, 180, 30),  # BGR — zombie shade of green
+    }
+    if class_name in _EXPLICIT:
+        return _EXPLICIT[class_name]
     seed = sum(ord(char) for char in class_name)
     blue = 80 + (seed * 97) % 176
     green = 80 + (seed * 57) % 176
