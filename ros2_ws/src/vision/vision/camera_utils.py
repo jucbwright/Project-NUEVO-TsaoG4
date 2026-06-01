@@ -1,8 +1,63 @@
 from __future__ import annotations
 
+import glob
 import time
 
 import cv2
+import numpy as np
+
+
+class ImageFolderCamera:
+    """Cycles through static images in a directory — drop-in replacement for ManagedCamera."""
+
+    EXTENSIONS = ("*.jpg", "*.jpeg", "*.png", "*.bmp")
+
+    def __init__(self, folder: str, width: int, height: int, logger) -> None:
+        self.folder = folder
+        self.width = int(width)
+        self.height = int(height)
+        self.logger = logger
+        self._paths: list[str] = []
+        self._index = 0
+        self._loaded = False
+
+    def ensure(self) -> bool:
+        if self._loaded:
+            return True
+        paths: list[str] = []
+        for ext in self.EXTENSIONS:
+            paths.extend(glob.glob(f"{self.folder}/{ext}"))
+        if not paths:
+            self.logger.warn(
+                "ImageFolderCamera: no images found in %s" % self.folder,
+                throttle_duration_sec=5.0,
+            )
+            return False
+        self._paths = sorted(paths)
+        self._index = 0
+        self._loaded = True
+        self.logger.info(
+            "ImageFolderCamera: loaded %d images from %s" % (len(self._paths), self.folder)
+        )
+        return True
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        path = self._paths[self._index % len(self._paths)]
+        self._index += 1
+        frame = cv2.imread(path)
+        if frame is None:
+            self.logger.warn("ImageFolderCamera: failed to read %s" % path)
+            return False, None
+        if self.width > 0 and self.height > 0:
+            frame = cv2.resize(frame, (self.width, self.height))
+        self.logger.info("ImageFolderCamera: serving %s" % path)
+        return True, frame
+
+    def release(self) -> None:
+        pass
+
+    def handle_read_failure(self) -> None:
+        pass
 
 
 class ManagedCamera:

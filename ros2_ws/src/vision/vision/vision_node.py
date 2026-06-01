@@ -8,7 +8,7 @@ from bridge_interfaces.msg import VisionDetection, VisionDetectionArray
 import rclpy
 from rclpy.node import Node
 
-from vision.camera_utils import ManagedCamera
+from vision.camera_utils import ImageFolderCamera, ManagedCamera
 from vision.debug_utils import DetectionDebugWriter
 from vision.model_utils import (
     DetectedObject,
@@ -103,6 +103,7 @@ class VisionNode(Node):
         self.declare_parameter("ncnn_threads", 4)
         self.declare_parameter("reconnect_delay_sec", 1.0)
         self.declare_parameter("log_interval_sec", 5.0)
+        self.declare_parameter("image_source_dir", "")
         self.declare_parameter("debug_save_enabled", False)
         self.declare_parameter("debug_output_dir", "/runtime_output/vision")
         self.declare_parameter("debug_save_rate_hz", 1.0)
@@ -126,15 +127,24 @@ class VisionNode(Node):
         self._log_interval_sec = max(1.0, float(self.get_parameter("log_interval_sec").value))
 
         self._publisher = self.create_publisher(VisionDetectionArray, "/vision/detections", 10)
-        self._camera = ManagedCamera(
-            device=self._camera_device,
-            width=self._camera_width,
-            height=self._camera_height,
-            fps=self._camera_fps,
-            reconnect_delay_sec=self._reconnect_delay_sec,
-            log_interval_sec=self._log_interval_sec,
-            logger=self.get_logger(),
-        )
+        image_source_dir = str(self.get_parameter("image_source_dir").value).strip()
+        if image_source_dir:
+            self._camera = ImageFolderCamera(
+                folder=image_source_dir,
+                width=self._camera_width,
+                height=self._camera_height,
+                logger=self.get_logger(),
+            )
+        else:
+            self._camera = ManagedCamera(
+                device=self._camera_device,
+                width=self._camera_width,
+                height=self._camera_height,
+                fps=self._camera_fps,
+                reconnect_delay_sec=self._reconnect_delay_sec,
+                log_interval_sec=self._log_interval_sec,
+                logger=self.get_logger(),
+            )
         self._debug_writer = DetectionDebugWriter(
             enabled=bool(self.get_parameter("debug_save_enabled").value),
             output_dir=str(self.get_parameter("debug_output_dir").value),

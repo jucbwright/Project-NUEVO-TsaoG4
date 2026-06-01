@@ -51,7 +51,7 @@ services:
       - NUEVO_MOCK_LIDAR=1
       # rplidar_ros requires a host library (libfastcdr) not present in the VM
       # image — exclude it from the VM build. It is built on the real RPi only.
-      - NUEVO_ROS_PACKAGES=robot sensors bridge bridge_interfaces
+      - NUEVO_ROS_PACKAGES=robot sensors bridge bridge_interfaces vision
 
     restart: unless-stopped
 

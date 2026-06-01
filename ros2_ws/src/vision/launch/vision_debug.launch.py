@@ -28,6 +28,7 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[
                     COMMON_PARAMETERS,
                     {
+                        "image_source_dir": "/ros2_ws/src/vision",
                         "debug_save_enabled": True,
                         "debug_output_dir": "/runtime_output/vision",
                         "debug_save_rate_hz": 1.0,
