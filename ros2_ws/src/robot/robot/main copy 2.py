@@ -1,16 +1,16 @@
 """
-Boustrophedon path sweep with APF obstacle avoidance and LiDAR.
+pure_pursuit.py — FSM-based pure-pursuit path following
+=======================================================
+Copy this file over main.py, then restart the robot node:
 
-Combines:
-  - pure_pursuit.py  : path structure and waypoints
-  - obstacle_avoidance_apf.py : LiDAR setup and APF obstacle avoidance tuning
+    cp examples/pure_pursuit.py main.py
+    ros2 run robot robot
 
-Press BTN_1 to start, BTN_2 to cancel.
+BTN_1 starts the path. BTN_2 cancels and returns to IDLE.
 """
 
 from __future__ import annotations
 
-import math
 import time
 
 from robot.hardware_map import (
@@ -35,77 +35,66 @@ from robot.hardware_map import (
     WHEEL_DIAMETER,
 )
 from robot.robot import FirmwareState, Robot
-from robot.util import densify_polyline
+from robot.util import densify_polyline  # noqa: F401 - optional helper for students
+
 
 # ---------------------------------------------------------------------------
-# Sensor toggles
+# Sensor toggles — set True if the corresponding node is running
+# Hardware calibration (wheel geometry, lidar mount, tag offset) lives in
+# robot/hardware_map.py.
 # ---------------------------------------------------------------------------
+
 ENABLE_LIDAR = False
 ENABLE_GPS   = False
 
-TAG_ID = 14
+TAG_ID = -1  # IMPORTANT: set to the ArUco marker ID on your robot
 
-GPS_POSITION_ALPHA              = 0.05
-ENABLE_GPS_TANGENT_HEADING      = True
-GPS_TANGENT_ALPHA               = 0.15
+
+# ---------------------------------------------------------------------------
+# GPS tuning (only used when ENABLE_GPS = True)
+#
+# GPS_POSITION_ALPHA     — how strongly each GPS fix pulls the fused position.
+#                          0.05 = smooth/slow, 0.10 = default, 0.30 = aggressive
+#
+# ENABLE_GPS_TANGENT_HEADING — derive heading from GPS trajectory direction.
+#                          False = pure odometry heading (default).
+#
+# GPS_TANGENT_ALPHA      — how strongly GPS tangent corrects odometry heading.
+#                          0.05 = gentle, 0.15 = default, 0.30 = aggressive
+#
+# GPS_TANGENT_MIN_DISPLACEMENT_MM — travel required before accepting a new
+#                          heading sample. 100 = responsive, 200 = default,
+#                          400 = noise-robust (for jittery GPS)
+#
+# To tune: watch θ_odom vs θ_fused in the status output while running.
+# ---------------------------------------------------------------------------
+
+GPS_POSITION_ALPHA           = 0.10
+ENABLE_GPS_TANGENT_HEADING   = False
+GPS_TANGENT_ALPHA            = 0.15
 GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
 
-# ---------------------------------------------------------------------------
-# Path — boustrophedon lawnmower (from pure_pursuit.py blueprint)
-# ---------------------------------------------------------------------------
-tile = 610.0
-# Straight line test — 3 tiles forward
-# INITIAL_THETA_DEG=180 means robot faces south (-Y), so path goes south
-PATH_CONTROL_POINTS = [
-    # Straight: 5.5 tiles north
-    (0,           0),
-    (0,           tile*5.5),
 
-    # Turn: arc right over 1.5 tiles, shifting 1 tile east
-    (tile*0.33,   tile*6),
-    (tile*0.66,   tile*6.5),
-    (tile*1,      tile*7),
+# ---------------------------------------------------------------------------
+# Pure pursuit configuration
+# ---------------------------------------------------------------------------
+
+PATH_CONTROL_POINTS = [
+    (0.0, 0.0),
+    (0.0, 610*6),
+    (610.0, 610*6),
 ]
 
-WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=60.0)
+# Optional: densify long segments for smoother tracking.
+# PATH_CONTROL_POINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=50.0)
 
-# ---------------------------------------------------------------------------
-# Pure pursuit tuning (from pure_pursuit.py blueprint)
-# ---------------------------------------------------------------------------
-VELOCITY_MM_S     = 180.0
-LOOKAHEAD_MM      = 140.0
-TOLERANCE_MM      = 25.0
-ADVANCE_RADIUS_MM = 80.0
-MAX_ANGULAR_RAD_S = 1.5
-
-# ---------------------------------------------------------------------------
-# APF obstacle avoidance tuning (from obstacle_avoidance_apf.py blueprint)
-# ---------------------------------------------------------------------------
-APF_REPULSION_RANGE_MM = 300.0
-APF_REPULSION_GAIN     = 550.0
+VELOCITY_MM_S      = 150.0
+LOOKAHEAD_MM       = 120.0
+TOLERANCE_MM       = 25.0
+ADVANCE_RADIUS_MM  = 80.0
+MAX_ANGULAR_RAD_S  = 1.5
 
 STATUS_PRINT_INTERVAL_S = 0.5
-
-
-def _make_obstacle_provider(robot: Robot):
-    """Convert world-frame tracked obstacles to robot-frame mm for APF."""
-    def _provider():
-        tracks = robot.get_obstacle_tracks()
-        if not tracks:
-            return []
-        if robot.has_fused_pose():
-            rx, ry, rtheta = robot.get_fused_pose()
-        else:
-            rx, ry, rtheta = robot.get_odometry_pose()
-        cos_t = math.cos(-rtheta)
-        sin_t = math.sin(-rtheta)
-        result = []
-        for t in tracks:
-            dx = float(t['x']) - rx
-            dy = float(t['y']) - ry
-            result.append((cos_t * dx - sin_t * dy, sin_t * dx + cos_t * dy))
-        return result
-    return _provider
 
 
 def configure_robot(robot: Robot) -> None:
@@ -133,7 +122,6 @@ def configure_robot(robot: Robot) -> None:
             fov_deg=LIDAR_FOV_DEG,
         )
         robot.start_lidar_world_publisher()
-        robot.set_obstacle_provider(_make_obstacle_provider(robot))
         print("[sensor] lidar enabled — subscribing to /scan")
 
     if ENABLE_GPS:
@@ -178,34 +166,22 @@ def print_status(robot: Robot) -> None:
     if ENABLE_GPS and robot.has_fused_pose():
         fx, fy, ftheta = robot.get_fused_pose()
         print(
-            f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°  |  "
-            f"fused=({fx:6.0f}, {fy:6.0f}) mm  θ_fused={ftheta:5.1f}°"
+            f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ_odom={otheta:5.1f}°  |  "
+            f"fused=({fx:6.0f}, {fy:6.0f}) mm  θ_fused={ftheta:5.1f}°  "
+            f"gps={'fresh' if robot.is_gps_active() else 'stale'}"
         )
     else:
-        obstacle_tracks = robot.get_obstacle_tracks()
-        if obstacle_tracks:
-            nearest = min(
-                max(0.0,
-                    ((float(t["x"]) - ox) ** 2 + (float(t["y"]) - oy) ** 2) ** 0.5
-                    - float(t["radius"]))
-                for t in obstacle_tracks
-            )
-            track_summary = f"  tracked={len(obstacle_tracks)} nearest={nearest:.0f} mm"
-        else:
-            track_summary = "  tracked=0"
-        print(f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°{track_summary}")
+        print(f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°")
 
 
 def start_path(robot: Robot):
-    return robot.apf_follow_path(
-        waypoints=WAYPOINTS,
+    return robot.purepursuit_follow_path(
+        waypoints=PATH_CONTROL_POINTS,
         velocity=VELOCITY_MM_S,
         lookahead=LOOKAHEAD_MM,
         tolerance=TOLERANCE_MM,
         advance_radius=ADVANCE_RADIUS_MM,
         max_angular_rad_s=MAX_ANGULAR_RAD_S,
-        repulsion_range=APF_REPULSION_RANGE_MM,
-        repulsion_gain=APF_REPULSION_GAIN,
         blocking=False,
     )
 
@@ -217,7 +193,7 @@ def run(robot: Robot) -> None:
     drive_handle = None
     last_status_print_at = 0.0
 
-    period    = 1.0 / float(DEFAULT_FSM_HZ)
+    period = 1.0 / float(DEFAULT_FSM_HZ)
     next_tick = time.monotonic()
 
     while True:
@@ -229,24 +205,38 @@ def run(robot: Robot) -> None:
             show_idle_leds(robot)
             print("[FSM] IDLE — press BTN_1 to start path, BTN_2 to cancel")
             print(
-                f"[CFG] waypoints={len(WAYPOINTS)} velocity={VELOCITY_MM_S:.0f} mm/s "
-                f"lookahead={LOOKAHEAD_MM:.0f} mm tolerance={TOLERANCE_MM:.0f} mm "
-                f"repulsion={APF_REPULSION_RANGE_MM:.0f} mm"
+                f"[CFG] velocity={VELOCITY_MM_S:.0f} mm/s  lookahead={LOOKAHEAD_MM:.0f} mm  "
+                f"tolerance={TOLERANCE_MM:.0f} mm  advance_radius={ADVANCE_RADIUS_MM:.0f} mm"
             )
             if ENABLE_LIDAR:
                 print(
-                    f"[CFG] lidar mount=({LIDAR_MOUNT_X_MM:.0f},{LIDAR_MOUNT_Y_MM:.0f}) mm "
-                    f"filter={LIDAR_RANGE_MIN_MM:.0f}-{LIDAR_RANGE_MAX_MM:.0f} mm"
+                    f"[CFG] lidar mount=({LIDAR_MOUNT_X_MM:.0f}, {LIDAR_MOUNT_Y_MM:.0f}) mm "
+                    f"theta={LIDAR_MOUNT_THETA_DEG:.1f}° filter={LIDAR_RANGE_MIN_MM:.0f}-"
+                    f"{LIDAR_RANGE_MAX_MM:.0f} mm fov={LIDAR_FOV_DEG}"
                 )
+            if ENABLE_GPS:
+                print(
+                    f"[CFG] gps tag_id={TAG_ID}  "
+                    f"tag_body=({TAG_BODY_OFFSET_X_MM:.0f}, {TAG_BODY_OFFSET_Y_MM:.0f}) mm  "
+                    f"position_alpha={GPS_POSITION_ALPHA:.2f}"
+                )
+                if ENABLE_GPS_TANGENT_HEADING:
+                    print(
+                        f"[CFG] heading=gps_tangent  "
+                        f"alpha={GPS_TANGENT_ALPHA:.2f}  "
+                        f"min_displacement={GPS_TANGENT_MIN_DISPLACEMENT_MM:.0f} mm"
+                    )
+                else:
+                    print("[CFG] heading=imu")
             state = "IDLE"
 
         elif state == "IDLE":
             if robot.was_button_pressed(Button.BTN_1):
                 reset_mission_pose(robot)
                 show_moving_leds(robot)
+                print(f"[FSM] MOVING — {len(PATH_CONTROL_POINTS)} waypoints")
                 drive_handle = start_path(robot)
                 last_status_print_at = now
-                print(f"[FSM] MOVING — {len(WAYPOINTS)} waypoints")
                 state = "MOVING"
 
         elif state == "MOVING":
