@@ -21,14 +21,13 @@ Manually position the mechanism at your desired home before starting.
   BTN_1 -- start the aim sequence (pan + tilt through all targets)
   BTN_2 -- cancel the sequence and return to IDLE at any time
 
-Targets are defined in TARGETS as (pan_steps, tilt_steps) absolute positions
-from the startup origin.  Add, remove, or adjust entries to match your setup.
+At each grid position the turret dwells for DWELL_S seconds and checks the
+vision node for zombie detections:
+  All LEDs on   = zombie detected at this position
+  Orange LED    = no zombie detected
 
-CAMERA INTEGRATION NOTE
------------------------
-Future: replace the BTN_1 cycle logic with a callback that receives a detected
-target's pixel coordinates, converts them to (pan_steps, tilt_steps) via a
-calibration matrix, and calls the sequence directly.
+Start the vision node before running:
+    ros2 launch vision vision_debug.launch.py
 """
 
 from __future__ import annotations
@@ -64,6 +63,17 @@ TILT_ACCEL   = 150
 AIM_TIMEOUT_S = 10.0   # max seconds per stepper move
 DWELL_S       = 3.0    # seconds to hold each position before moving to the next
 
+# ---------------------------------------------------------------------------
+# Vision / zombie detection  (same values as zombieTracker.py)
+# ---------------------------------------------------------------------------
+
+MIN_CONFIDENCE   = 0.30
+VISION_STALE_SEC = 3.0
+LED_BRIGHTNESS   = 255
+DWELL_POLL_S     = 0.2   # how often to re-check for zombie during the dwell
+
+ALL_LEDS = (LED.RED, LED.GREEN, LED.BLUE, LED.ORANGE, LED.PURPLE)
+
 
 # ---------------------------------------------------------------------------
 # Grid positions (steps from startup origin) -- tune to match your build
@@ -84,18 +94,20 @@ class Target(NamedTuple):
 
 
 SEQUENCE: list[Target] = [
-    # Left column — tilt top → bottom
-    Target("L_UP",   PAN_L, TILT_U),
-    Target("L_CTR",  PAN_L, TILT_C),
+    # Start at centre
+    Target("HOME",   PAN_C, TILT_C),
+    # Left column — tilt bottom → top
     Target("L_DOWN", PAN_L, TILT_D),
-    # Center column — tilt bottom → top (snake reversal)
-    Target("C_DOWN", PAN_C, TILT_D),
-    Target("C_CTR",  PAN_C, TILT_C),
+    Target("L_CTR",  PAN_L, TILT_C),
+    Target("L_UP",   PAN_L, TILT_U),
+    # Centre column — tilt top → bottom (snake reversal)
     Target("C_UP",   PAN_C, TILT_U),
-    # Right column — tilt top → bottom (snake reversal)
-    Target("R_UP",   PAN_R, TILT_U),
-    Target("R_CTR",  PAN_R, TILT_C),
+    Target("C_CTR",  PAN_C, TILT_C),
+    Target("C_DOWN", PAN_C, TILT_D),
+    # Right column — tilt bottom → top (snake reversal)
     Target("R_DOWN", PAN_R, TILT_D),
+    Target("R_CTR",  PAN_R, TILT_C),
+    Target("R_UP",   PAN_R, TILT_U),
     # Return home
     Target("HOME",   PAN_C, TILT_C),
 ]
@@ -107,6 +119,27 @@ SEQUENCE: list[Target] = [
 
 def configure_robot(robot: Robot) -> None:
     robot.set_unit(POSITION_UNIT)
+    robot.enable_vision()
+
+
+def _find_zombie(robot: Robot) -> dict | None:
+    """Return the highest-confidence zombie detection, or None."""
+    if not robot.is_vision_active(timeout_s=VISION_STALE_SEC):
+        return None
+    best, best_conf = None, -1.0
+    for det in robot.get_detections("zombie"):
+        conf = float(det["confidence"])
+        if conf < MIN_CONFIDENCE:
+            continue
+        if conf > best_conf:
+            best_conf = conf
+            best = det
+    return best
+
+
+def _dim_all_leds(robot: Robot) -> None:
+    for led in ALL_LEDS:
+        robot.set_led(led, 0)
 
 
 def show_idle_leds(robot: Robot) -> None:
@@ -181,8 +214,20 @@ def run(robot: Robot) -> None:
                                 print(f"[warn] tilt timed out before reaching {target.label}")
                             pos["tilt"] = target.tilt
                         print(f"[AIM] aimed at {target.label} — holding {DWELL_S}s")
-                        if not task.sleep(DWELL_S):
-                            break
+                        dwell_end = time.monotonic() + DWELL_S
+                        while time.monotonic() < dwell_end:
+                            if task.cancelled():
+                                return
+                            zombie = _find_zombie(robot)
+                            if zombie is not None:
+                                for led in ALL_LEDS:
+                                    robot.set_led(led, LED_BRIGHTNESS)
+                                print(f"[ZOMBIE] Detected at {target.label}!")
+                            else:
+                                _dim_all_leds(robot)
+                                robot.set_led(LED.ORANGE, 200)
+                            time.sleep(DWELL_POLL_S)
+                        show_running_leds(robot)
 
                 task_handle = run_task(_sequence_worker, blocking=False)
                 state = "RUNNING"
