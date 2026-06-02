@@ -82,6 +82,68 @@ def classify_person_color(person_crop) -> tuple[str, float]:
         return "green", min(1.0, green_ratio / 0.5)
     return "other", 0.0
 
+def _boxes_overlap(a: DetectedObject, b: DetectedObject) -> bool:
+    """Return True if two bounding boxes share any area."""
+    return not (
+        a.x + a.width  <= b.x or b.x + b.width  <= a.x or
+        a.y + a.height <= b.y or b.y + b.height <= a.y
+    )
+
+
+def _merge_group(group: list[DetectedObject]) -> DetectedObject:
+    """Union all boxes in a group into one, keeping the highest-confidence attributes."""
+    x1 = min(d.x for d in group)
+    y1 = min(d.y for d in group)
+    x2 = max(d.x + d.width  for d in group)
+    y2 = max(d.y + d.height for d in group)
+    best = max(group, key=lambda d: d.confidence)
+    merged = DetectedObject(
+        class_name="zombie",
+        confidence=best.confidence,
+        x=x1, y=y1,
+        width=x2 - x1,
+        height=y2 - y1,
+    )
+    for attr in best.attributes:
+        merged.add_attribute(attr.name, attr.value, attr.score)
+    return merged
+
+
+def _merge_zombie_detections(detections: list[DetectedObject]) -> list[DetectedObject]:
+    """Merge overlapping zombie bounding boxes into single union boxes.
+
+    Iterates until stable so chains of touching boxes (body + feet + hand)
+    all collapse into one detection.
+    """
+    zombies = [d for d in detections if d.class_name == "zombie"]
+    others  = [d for d in detections if d.class_name != "zombie"]
+
+    if len(zombies) <= 1:
+        return detections
+
+    changed = True
+    while changed:
+        changed = False
+        result: list[DetectedObject] = []
+        used = [False] * len(zombies)
+        for i, a in enumerate(zombies):
+            if used[i]:
+                continue
+            group = [a]
+            used[i] = True
+            for j in range(i + 1, len(zombies)):
+                if used[j]:
+                    continue
+                if any(_boxes_overlap(g, zombies[j]) for g in group):
+                    group.append(zombies[j])
+                    used[j] = True
+                    changed = True
+            result.append(_merge_group(group))
+        zombies = result
+
+    return others + zombies
+
+
 class VisionNode(Node):
     def __init__(self) -> None:
         super().__init__("vision_node")
@@ -282,7 +344,7 @@ class VisionNode(Node):
                             continue
                         d.class_name = "zombie"
                     filtered_yolo.append(d)
-                all_detections = filtered_yolo + zombie_green_detections
+                all_detections = _merge_zombie_detections(filtered_yolo + zombie_green_detections)
 
                 message = self._build_detection_array_msg(
                     capture_stamp=capture_stamp,
