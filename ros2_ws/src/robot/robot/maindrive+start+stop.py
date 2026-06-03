@@ -45,7 +45,7 @@ from robot.stop import LookForStop, StopSignNear
 # Sensor toggles
 # ---------------------------------------------------------------------------
 ENABLE_LIDAR = True
-ENABLE_GPS   = True
+ENABLE_GPS   = False
 
 TAG_ID = 14
 
@@ -57,53 +57,54 @@ GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
 # ---------------------------------------------------------------------------
 # Path
 # ---------------------------------------------------------------------------
-tile = 650.0
+tile = 650.0 # mm (standard tile length))
 PATH_CONTROL_POINTS = [
-    # Start at the traffic light, then drive straight for 6 tiles.
+    # Straight 1 — right along row 0
     (tile*0,    tile*0),
     (tile*0,    tile*6),
 
-    # 90-degree turn, then travel 1 tile.
+    # Turn 1 — down from (0,6) to (1,6)
     (tile*0.33, tile*6),
     (tile*0.66, tile*6),
     (tile*1,    tile*6),
 
-    # Second 90-degree turn, then travel 1 tile toward the ramp.
-    (tile*1,    tile*6.33),
-    (tile*1,    tile*6.66),
-    (tile*1,    tile*7),
+    # Straight 2 — left along row 1
+    (tile*1,    tile*5),
+    (tile*1,    tile*4),
+    (tile*1,    tile*3),
+    (tile*1,    tile*2),
+    (tile*1,    tile*1),
 
-    # Ramp approach and 2 tiles straight after climbing it.
-    (tile*1,    tile*8),
-    (tile*1,    tile*9),
+    # Turn 2 — down from (1,1) to (2,1)
+    (tile*1.33, tile*1),
+    (tile*1.66, tile*1),
+    (tile*2,    tile*1),
 
-    # 90-degree left section, then 2 tiles straight.
-    (tile*1.33, tile*9),
-    (tile*1.66, tile*9),
-    (tile*2,    tile*9),
-    (tile*3,    tile*9),
+    # Straight 3 — right along row 2 (obstacle avoidance handles cones later)
+    (tile*2,    tile*2),
+    (tile*2,    tile*3),
+    (tile*2,    tile*4),
+    (tile*2,    tile*5),
+    (tile*2,    tile*6),
 
-    # Diagonal obstacle-course weave.
-    (tile*3.35, tile*9.75),
-    (tile*2.95, tile*10.45),
-    (tile*3.45, tile*11.15),
-    (tile*3.05, tile*11.85),
-    (tile*3.55, tile*12.55),
+    # Turn 3 — down from (2,6) to (3,6)
+    (tile*2.33, tile*6),
+    (tile*2.66, tile*6),
+    (tile*3,    tile*6),
 
-    # Two 90-degree turns to line up with the finish lane.
-    (tile*3.9,  tile*12.85),
-    (tile*4.2,  tile*12.85),
-    (tile*4.2,  tile*13.2),
+    # Straight 4 — left along row 3
+    (tile*3,    tile*5),
+    (tile*3,    tile*4),
+    (tile*3,    tile*3),
+    (tile*3,    tile*2),
+    (tile*3,    tile*1),
 
-    # Final 5-tile sprint to the finish line.
-    (tile*4.2,  tile*14.2),
-    (tile*4.2,  tile*15.2),
-    (tile*4.2,  tile*16.2),
-    (tile*4.2,  tile*17.2),
-    (tile*4.2,  tile*18.2),
 ]
+  
+
 
 WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=60.0)
+
 
 VELOCITY_MM_S          = 180.0
 LOOKAHEAD_MM           = 250.0
