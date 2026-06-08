@@ -45,18 +45,19 @@ from robot.stop import LookForStop, StopSignNear
 # Sensor toggles
 # ---------------------------------------------------------------------------
 ENABLE_LIDAR = True
-ENABLE_GPS   = False
+ENABLE_GPS   = True
 
 TAG_ID = 14
 
 GPS_POSITION_ALPHA              = 0.05
 ENABLE_GPS_TANGENT_HEADING      = True
-GPS_TANGENT_ALPHA               = 0.15
-GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
+GPS_TANGENT_ALPHA               = 0.30
+GPS_TANGENT_MIN_DISPLACEMENT_MM = 180.0
 
 # ---------------------------------------------------------------------------
 # Path
 # ---------------------------------------------------------------------------
+TILE_MM = 610.0
 tile = 650.0 # mm (standard tile length))
 PATH_CONTROL_POINTS = [
     # Straight 1 — right along row 0
@@ -99,24 +100,49 @@ PATH_CONTROL_POINTS = [
     (tile*3,    tile*2),
     (tile*3,    tile*1),
 
+    # Turn 4 — down from (3,1) to (4,1)
+    (tile*3.33, tile*1),
+    (tile*3.66, tile*1),
+    (tile*4,    tile*1),
+
+    # Final straight — left along row 4 to end at (4,0)
+    (tile*4,    tile*0),
 ]
-  
+
+GOAL_MM = (610.0, 610.0*5)
+WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=40.0)
 
 
-WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=60.0)
-
-
-VELOCITY_MM_S          = 180.0
-LOOKAHEAD_MM           = 250.0
+VELOCITY_MM_S          = 300.0
+LOOKAHEAD_MM           = 160.0
 TOLERANCE_MM           = 25.0
-ADVANCE_RADIUS_MM      = 80.0
+ADVANCE_RADIUS_MM      = 35.0
 MAX_ANGULAR_RAD_S      = 1.5
 APF_REPULSION_RANGE_MM = 60.0
-APF_REPULSION_GAIN     = 40.0
+APF_REPULSION_GAIN     = 50.0
 ROBOT_FRONT_MM         = 120.0
 ROBOT_REAR_MM          = 360.0
 ROBOT_HALF_WIDTH_MM    = 200.0
 STATUS_PRINT_INTERVAL_S = 0.5
+
+# Stop-sign detections are only mission-ending near the finish lane. This
+# prevents a visible sign, poster, or classifier glitch from cancelling the
+# drive during the earlier straight sections. These values match the restored
+# 650 mm tile waypoint frame above.
+STOP_SIGN_ARM_X_MIN_MM = tile * 3.5
+STOP_SIGN_ARM_Y_MAX_MM = tile * 1.5
+
+SECTION_MARKERS = [
+    ("lane 1 up", tile * 0, tile * 6),
+    ("top crossover 1->2", tile * 1, tile * 6),
+    ("lane 2 down", tile * 1, tile * 1),
+    ("bottom crossover 2->3", tile * 2, tile * 1),
+    ("lane 3 up", tile * 2, tile * 6),
+    ("top crossover 3->4", tile * 3, tile * 6),
+    ("lane 4 down", tile * 3, tile * 1),
+    ("bottom crossover 4->5", tile * 4, tile * 1),
+    ("finish lane", tile * 4, tile * 0),
+]
 
 
 def _make_obstacle_provider(robot: Robot):
@@ -125,9 +151,10 @@ def _make_obstacle_provider(robot: Robot):
         if not tracks:
             return []
         if robot.has_fused_pose():
-            rx, ry, rtheta = robot.get_fused_pose()
+            rx, ry, rtheta_deg = robot.get_fused_pose()
         else:
-            rx, ry, rtheta = robot.get_odometry_pose()
+            rx, ry, rtheta_deg = robot.get_odometry_pose()
+        rtheta = math.radians(rtheta_deg)
         cos_t = math.cos(-rtheta)
         sin_t = math.sin(-rtheta)
         result = []
@@ -209,20 +236,45 @@ def show_moving_leds(robot: Robot) -> None:
     robot.set_led(LED.GREEN, 200)
 
 
+def get_nav_pose(robot: Robot) -> tuple[float, float, float]:
+    return robot.get_pose()
+
+
+def estimate_next_section(x_mm: float, y_mm: float) -> str:
+    label, target_x, target_y = min(
+        SECTION_MARKERS,
+        key=lambda item: (x_mm - item[1]) ** 2 + (y_mm - item[2]) ** 2,
+    )
+    return label
+
+
+def stop_sign_armed(robot: Robot) -> bool:
+    x_mm, y_mm, _theta = get_nav_pose(robot)
+    return x_mm >= STOP_SIGN_ARM_X_MIN_MM and y_mm <= STOP_SIGN_ARM_Y_MAX_MM
+
+
 def print_status(robot: Robot) -> None:
     ox, oy, otheta = robot.get_odometry_pose()
+    nx, ny, ntheta = get_nav_pose(robot)
     obstacle_tracks = robot.get_obstacle_tracks()
     if obstacle_tracks:
         nearest = min(
             max(0.0,
-                ((float(t["x"]) - ox) ** 2 + (float(t["y"]) - oy) ** 2) ** 0.5
+                ((float(t["x"]) - nx) ** 2 + (float(t["y"]) - ny) ** 2) ** 0.5
                 - float(t["radius"]))
             for t in obstacle_tracks
         )
         track_summary = f"  tracked={len(obstacle_tracks)} nearest={nearest:.0f} mm"
     else:
         track_summary = "  tracked=0"
-    print(f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°{track_summary}")
+    pose_source = "fused" if robot.has_fused_pose() else "odom"
+    section = estimate_next_section(nx, ny)
+    print(
+        f"  nav[{pose_source}]=({nx:6.0f}, {ny:6.0f}) mm theta={ntheta:5.1f} deg "
+        f"odom=({ox:6.0f}, {oy:6.0f}) theta={otheta:5.1f} deg "
+        f"section={section} stop_arm={'yes' if stop_sign_armed(robot) else 'no'}"
+        f"{track_summary}"
+    )
 
 
 def start_path(robot: Robot):
@@ -264,6 +316,10 @@ def run(robot: Robot) -> None:
                 f"[CFG] waypoints={len(WAYPOINTS)} velocity={VELOCITY_MM_S:.0f} mm/s "
                 f"lookahead={LOOKAHEAD_MM:.0f} mm repulsion={APF_REPULSION_RANGE_MM:.0f} mm"
             )
+            print(
+                f"[CFG] stop sign armed only after x>={STOP_SIGN_ARM_X_MIN_MM:.0f} mm "
+                f"and y<={STOP_SIGN_ARM_Y_MAX_MM:.0f} mm"
+            )
             state = "IDLE"
 
         elif state == "IDLE":
@@ -287,7 +343,7 @@ def run(robot: Robot) -> None:
                 print("[FSM] IDLE — path cancelled")
                 state = "IDLE"
 
-            elif StopSignNear(robot):
+            elif stop_sign_armed(robot) and StopSignNear(robot):
                 if drive_handle is not None:
                     drive_handle.cancel()
                     drive_handle.wait(timeout=1.0)

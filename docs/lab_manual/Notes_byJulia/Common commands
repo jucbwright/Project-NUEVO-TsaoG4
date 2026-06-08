@@ -4,6 +4,7 @@ cp [filepathSTARTING.txt] [filepath2.txt] copies one file from spot 1 to spot 2.
 
 restart docker
 ./ros2_ws/docker/restart.sh
+
 ./ros2_ws/docker/enter_ros2.sh
 
 tail -f ros2_ws/runtime_output/robot_node.log

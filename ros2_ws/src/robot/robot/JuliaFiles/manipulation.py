@@ -46,7 +46,7 @@ from robot.JuliaFiles.iSeeDeadPpl import (
     MIN_CONFIDENCE,
     VISION_STALE_SEC,
 )
-from robot.JuliaFiles.STEPmanipulation_JW import (
+from ros2_ws.src.robot.robot.JuliaFiles.ZombieSweep import (
     AIM_TIMEOUT_S,
     DWELL_S,
     PAN_ACCEL,

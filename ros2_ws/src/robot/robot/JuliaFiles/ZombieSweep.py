@@ -215,18 +215,29 @@ def run(robot: Robot) -> None:
                             pos["tilt"] = target.tilt
                         print(f"[AIM] aimed at {target.label} — holding {DWELL_S}s")
                         dwell_end = time.monotonic() + DWELL_S
+                        zombie_found = False
                         while time.monotonic() < dwell_end:
                             if task.cancelled():
                                 return
                             zombie = _find_zombie(robot)
                             if zombie is not None:
-                                for led in ALL_LEDS:
-                                    robot.set_led(led, LED_BRIGHTNESS)
-                                print(f"[ZOMBIE] Detected at {target.label}!")
-                            else:
-                                _dim_all_leds(robot)
-                                robot.set_led(LED.ORANGE, 200)
+                                zombie_found = True
+                                print(f"[ZOMBIE] Detected at {target.label}! Holding 2s for shot...")
+                                break
+                            _dim_all_leds(robot)
+                            robot.set_led(LED.ORANGE, 200)
                             time.sleep(DWELL_POLL_S)
+
+                        if zombie_found:
+                            for led in ALL_LEDS:
+                                robot.set_led(led, LED_BRIGHTNESS)
+                            shoot_end = time.monotonic() + 2.0
+                            while time.monotonic() < shoot_end:
+                                if task.cancelled():
+                                    return
+                                time.sleep(DWELL_POLL_S)
+                            _dim_all_leds(robot)
+
                         show_running_leds(robot)
 
                 task_handle = run_task(_sequence_worker, blocking=False)

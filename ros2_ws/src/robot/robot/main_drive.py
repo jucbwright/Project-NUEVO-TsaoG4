@@ -41,7 +41,7 @@ from robot.util import densify_polyline
 # Sensor toggles
 # ---------------------------------------------------------------------------
 ENABLE_LIDAR = True
-ENABLE_GPS   = False
+ENABLE_GPS   = True
 
 TAG_ID = 14
 
@@ -53,7 +53,7 @@ GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
 # ---------------------------------------------------------------------------
 # Path — boustrophedon lawnmower (from pure_pursuit.py blueprint)
 # ---------------------------------------------------------------------------
-tile = 610.0
+tile = 650.0
 # Straight line test — 3 tiles forward
 # INITIAL_THETA_DEG=180 means robot faces south (-Y), so path goes south
 PATH_CONTROL_POINTS = [

@@ -84,7 +84,7 @@ GPS_TANGENT_MIN_DISPLACEMENT_MM = 200.0
 # ---------------------------------------------------------------------------
 # Pure pursuit configuration
 # ---------------------------------------------------------------------------
-tile = 610.0 # mm (standard tile length))
+tile = 650.0 # mm (standard tile length))
 PATH_CONTROL_POINTS = [
     # Straight 1 — right along row 0
     (tile*0,    tile*0),

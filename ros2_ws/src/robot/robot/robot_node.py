@@ -49,6 +49,7 @@ def main(args=None) -> None:
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
 
     try:
+#        from robot.motor2_diag import run   # motor 2 oscillation diagnostic
         from robot.main import run          # zombie sweep
 #        from robot.main_drive import run    # boustrophedon path + lidar
 
