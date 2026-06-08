@@ -10,3 +10,4 @@ restart docker
 tail -f ros2_ws/runtime_output/robot_node.log
 
 ros2 launch robot full_mission.launch.py
+ros2 launch vision vision_debug.launch.py
