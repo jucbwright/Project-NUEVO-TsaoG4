@@ -304,7 +304,7 @@ def run(robot: Robot) -> None:
     period    = 1.0 / float(DEFAULT_FSM_HZ)
     next_tick = time.monotonic()
 
-    while True:
+    while state != "DONE":
         now = time.monotonic()
 
         if state == "INIT":
@@ -340,8 +340,8 @@ def run(robot: Robot) -> None:
                     drive_handle = None
                 robot.stop()
                 show_idle_leds(robot)
-                print("[FSM] IDLE — path cancelled")
-                state = "IDLE"
+                print("[FSM] DONE — path cancelled, proceeding to sweep")
+                state = "DONE"
 
             elif stop_sign_armed(robot) and StopSignNear(robot):
                 if drive_handle is not None:
@@ -350,21 +350,20 @@ def run(robot: Robot) -> None:
                     drive_handle = None
                 robot.stop()
                 show_idle_leds(robot)
-                print("[FSM] STOPPED — stop sign detected")
-                state = "IDLE"
+                print("[FSM] DONE — stop sign detected, proceeding to sweep")
+                state = "DONE"
 
             else:
                 if now - last_status_print_at >= STATUS_PRINT_INTERVAL_S:
                     print_status(robot)
                     last_status_print_at = now
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[FSM] DONE — path complete")
+                    print("[FSM] DONE — path complete, proceeding to sweep")
                     print_status(robot)
                     drive_handle = None
                     robot.stop()
                     show_idle_leds(robot)
-                    print("[FSM] IDLE — press BTN_1 or wait for green light")
-                    state = "IDLE"
+                    state = "DONE"
 
         next_tick += period
         sleep_s = next_tick - time.monotonic()

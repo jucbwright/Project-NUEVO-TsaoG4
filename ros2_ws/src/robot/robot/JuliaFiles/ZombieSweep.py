@@ -166,7 +166,7 @@ def run(robot: Robot) -> None:
     period    = 1.0 / float(DEFAULT_FSM_HZ)
     next_tick = time.monotonic()
 
-    while True:
+    while state != "DONE":
 
         if state == "INIT":
             current = robot.get_state()
@@ -249,13 +249,13 @@ def run(robot: Robot) -> None:
                 task_handle.wait(timeout=AIM_TIMEOUT_S + 1.0)
                 task_handle = None
                 show_idle_leds(robot)
-                print("[FSM] IDLE -- cancelled, press BTN_1 to repeat")
-                state = "IDLE"
+                print("[FSM] DONE -- sweep cancelled")
+                state = "DONE"
             elif task_handle is not None and task_handle.is_finished():
                 task_handle = None
                 show_idle_leds(robot)
-                print("[FSM] IDLE -- sequence complete, press BTN_1 to repeat")
-                state = "IDLE"
+                print("[FSM] DONE -- sweep complete")
+                state = "DONE"
 
         next_tick += period
         sleep_s = next_tick - time.monotonic()
