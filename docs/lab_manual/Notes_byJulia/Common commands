@@ -8,3 +8,5 @@ restart docker
 ./ros2_ws/docker/enter_ros2.sh
 
 tail -f ros2_ws/runtime_output/robot_node.log
+
+ros2 launch vision vision_debug.launch.py
