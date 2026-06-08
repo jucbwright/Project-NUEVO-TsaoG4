@@ -57,8 +57,8 @@ GPS_TANGENT_MIN_DISPLACEMENT_MM = 180.0
 # ---------------------------------------------------------------------------
 # Path
 # ---------------------------------------------------------------------------
-TILE_MM = 610.0
-tile = 650.0 # mm (standard tile length))
+TILE_MM = 650.0
+tile = TILE_MM  # mm (course tile length)
 PATH_CONTROL_POINTS = [
     # Straight 1 — right along row 0
     (tile*0,    tile*0),
@@ -109,21 +109,51 @@ PATH_CONTROL_POINTS = [
     (tile*4,    tile*0),
 ]
 
-GOAL_MM = (610.0, 610.0*5)
-WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=40.0)
+GOAL_MM = (TILE_MM, TILE_MM * 5)
+WAYPOINT_SPACING_MM = 80.0
+WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=WAYPOINT_SPACING_MM)
+
+# Split the mission so only Straight 3 uses LiDAR/APF. All other sections are
+# pure pursuit using the current navigation pose, which means odom/GPS fusion
+# can influence pose but LiDAR cannot steer those sections.
+PURE_PURSUIT_SEGMENT_1_POINTS = PATH_CONTROL_POINTS[:14]
+APF_STRAIGHT_3_POINTS = [
+    (tile * 2, tile * 2),
+    (tile * 2, tile * 3),
+    (tile * 2, tile * 4),
+    (tile * 2, tile * 5),
+    (tile * 2, tile * 6),
+]
+PURE_PURSUIT_SEGMENT_2_POINTS = [APF_STRAIGHT_3_POINTS[-1], *PATH_CONTROL_POINTS[18:]]
+
+PATH_SEGMENTS = [
+    ("pure pursuit before Straight 3", False, densify_polyline(PURE_PURSUIT_SEGMENT_1_POINTS, spacing=WAYPOINT_SPACING_MM)),
+    ("APF obstacle lane Straight 3", True, densify_polyline(APF_STRAIGHT_3_POINTS, spacing=WAYPOINT_SPACING_MM)),
+    ("pure pursuit after Straight 3", False, densify_polyline(PURE_PURSUIT_SEGMENT_2_POINTS, spacing=WAYPOINT_SPACING_MM)),
+]
+TOTAL_SEGMENT_WAYPOINTS = sum(len(points) for _name, _uses_apf, points in PATH_SEGMENTS)
 
 
-VELOCITY_MM_S          = 300.0
+VELOCITY_MM_S          = 220.0
 LOOKAHEAD_MM           = 160.0
 TOLERANCE_MM           = 25.0
-ADVANCE_RADIUS_MM      = 35.0
+ADVANCE_RADIUS_MM      = 90.0
 MAX_ANGULAR_RAD_S      = 1.5
 APF_REPULSION_RANGE_MM = 60.0
-APF_REPULSION_GAIN     = 50.0
+APF_REPULSION_GAIN     = 35.0
 ROBOT_FRONT_MM         = 120.0
 ROBOT_REAR_MM          = 360.0
 ROBOT_HALF_WIDTH_MM    = 200.0
 STATUS_PRINT_INTERVAL_S = 0.5
+ACTIVE_SEGMENT_USES_APF = False
+
+# Only use LiDAR repulsion in the obstacle lane. The early/top turns should be
+# path-tracking only; otherwise stale or off-course tracks can make APF flip the
+# avoidance direction and oscillate left/right at the turn.
+APF_OBSTACLE_LANE_X_MIN_MM = tile * 1.5
+APF_OBSTACLE_LANE_X_MAX_MM = tile * 2.5
+APF_OBSTACLE_LANE_Y_MIN_MM = tile * 2.0
+APF_OBSTACLE_LANE_Y_MAX_MM = tile * 6.0
 
 # Stop-sign detections are only mission-ending near the finish lane. This
 # prevents a visible sign, poster, or classifier glitch from cancelling the
@@ -145,8 +175,24 @@ SECTION_MARKERS = [
 ]
 
 
+def _apf_obstacles_enabled(robot: Robot) -> bool:
+    x_mm, y_mm, _theta = robot.get_pose()
+    return (
+        ACTIVE_SEGMENT_USES_APF
+        and APF_OBSTACLE_LANE_X_MIN_MM <= x_mm <= APF_OBSTACLE_LANE_X_MAX_MM
+        and APF_OBSTACLE_LANE_Y_MIN_MM <= y_mm <= APF_OBSTACLE_LANE_Y_MAX_MM
+    )
+
+
+def _clear_apf_segment() -> None:
+    global ACTIVE_SEGMENT_USES_APF
+    ACTIVE_SEGMENT_USES_APF = False
+
+
 def _make_obstacle_provider(robot: Robot):
     def _provider():
+        if not _apf_obstacles_enabled(robot):
+            return []
         tracks = robot.get_obstacle_tracks()
         if not tracks:
             return []
@@ -272,24 +318,41 @@ def print_status(robot: Robot) -> None:
     print(
         f"  nav[{pose_source}]=({nx:6.0f}, {ny:6.0f}) mm theta={ntheta:5.1f} deg "
         f"odom=({ox:6.0f}, {oy:6.0f}) theta={otheta:5.1f} deg "
-        f"section={section} stop_arm={'yes' if stop_sign_armed(robot) else 'no'}"
+        f"section={section} apf={'yes' if _apf_obstacles_enabled(robot) else 'no'} stop_arm={'yes' if stop_sign_armed(robot) else 'no'}"
         f"{track_summary}"
     )
 
 
-def start_path(robot: Robot):
-    return robot.apf_follow_path(
-        waypoints=WAYPOINTS,
+def start_segment(robot: Robot, segment_index: int):
+    global ACTIVE_SEGMENT_USES_APF
+    name, uses_apf, waypoints = PATH_SEGMENTS[segment_index]
+    ACTIVE_SEGMENT_USES_APF = uses_apf
+    print(
+        f"[FSM] segment {segment_index + 1}/{len(PATH_SEGMENTS)} — {name} "
+        f"waypoints={len(waypoints)}"
+    )
+    if uses_apf:
+        return robot.apf_follow_path(
+            waypoints=waypoints,
+            velocity=VELOCITY_MM_S,
+            lookahead=LOOKAHEAD_MM,
+            tolerance=TOLERANCE_MM,
+            advance_radius=ADVANCE_RADIUS_MM,
+            max_angular_rad_s=MAX_ANGULAR_RAD_S,
+            repulsion_range=APF_REPULSION_RANGE_MM,
+            repulsion_gain=APF_REPULSION_GAIN,
+            robot_front_mm=ROBOT_FRONT_MM,
+            robot_rear_mm=ROBOT_REAR_MM,
+            robot_half_width_mm=ROBOT_HALF_WIDTH_MM,
+            blocking=False,
+        )
+    return robot.purepursuit_follow_path(
+        waypoints=waypoints,
         velocity=VELOCITY_MM_S,
         lookahead=LOOKAHEAD_MM,
         tolerance=TOLERANCE_MM,
         advance_radius=ADVANCE_RADIUS_MM,
         max_angular_rad_s=MAX_ANGULAR_RAD_S,
-        repulsion_range=APF_REPULSION_RANGE_MM,
-        repulsion_gain=APF_REPULSION_GAIN,
-        robot_front_mm=ROBOT_FRONT_MM,
-        robot_rear_mm=ROBOT_REAR_MM,
-        robot_half_width_mm=ROBOT_HALF_WIDTH_MM,
         blocking=False,
     )
 
@@ -299,6 +362,7 @@ def run(robot: Robot) -> None:
 
     state = "INIT"
     drive_handle = None
+    segment_index = 0
     last_status_print_at = 0.0
 
     period    = 1.0 / float(DEFAULT_FSM_HZ)
@@ -313,7 +377,7 @@ def run(robot: Robot) -> None:
             show_idle_leds(robot)
             print("[FSM] IDLE — waiting for GREEN light (or press BTN_1)")
             print(
-                f"[CFG] waypoints={len(WAYPOINTS)} velocity={VELOCITY_MM_S:.0f} mm/s "
+                f"[CFG] segments={len(PATH_SEGMENTS)} waypoints={TOTAL_SEGMENT_WAYPOINTS} velocity={VELOCITY_MM_S:.0f} mm/s "
                 f"lookahead={LOOKAHEAD_MM:.0f} mm repulsion={APF_REPULSION_RANGE_MM:.0f} mm"
             )
             print(
@@ -327,9 +391,10 @@ def run(robot: Robot) -> None:
             if GreenGo(robot) or robot.was_button_pressed(Button.BTN_1):
                 reset_mission_pose(robot)
                 show_moving_leds(robot)
-                drive_handle = start_path(robot)
+                segment_index = 0
+                drive_handle = start_segment(robot, segment_index)
                 last_status_print_at = now
-                print(f"[FSM] MOVING — {len(WAYPOINTS)} waypoints")
+                print(f"[FSM] MOVING — {TOTAL_SEGMENT_WAYPOINTS} total waypoints")
                 state = "MOVING"
 
         elif state == "MOVING":
@@ -338,6 +403,7 @@ def run(robot: Robot) -> None:
                     drive_handle.cancel()
                     drive_handle.wait(timeout=1.0)
                     drive_handle = None
+                _clear_apf_segment()
                 robot.stop()
                 show_idle_leds(robot)
                 print("[FSM] IDLE — path cancelled")
@@ -348,6 +414,7 @@ def run(robot: Robot) -> None:
                     drive_handle.cancel()
                     drive_handle.wait(timeout=1.0)
                     drive_handle = None
+                _clear_apf_segment()
                 robot.stop()
                 show_idle_leds(robot)
                 print("[FSM] STOPPED — stop sign detected")
@@ -358,13 +425,18 @@ def run(robot: Robot) -> None:
                     print_status(robot)
                     last_status_print_at = now
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[FSM] DONE — path complete")
-                    print_status(robot)
-                    drive_handle = None
-                    robot.stop()
-                    show_idle_leds(robot)
-                    print("[FSM] IDLE — press BTN_1 or wait for green light")
-                    state = "IDLE"
+                    segment_index += 1
+                    if segment_index < len(PATH_SEGMENTS):
+                        drive_handle = start_segment(robot, segment_index)
+                    else:
+                        print("[FSM] DONE — path complete")
+                        print_status(robot)
+                        drive_handle = None
+                        _clear_apf_segment()
+                        robot.stop()
+                        show_idle_leds(robot)
+                        print("[FSM] IDLE — press BTN_1 or wait for green light")
+                        state = "IDLE"
 
         next_tick += period
         sleep_s = next_tick - time.monotonic()
