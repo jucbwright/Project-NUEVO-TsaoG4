@@ -77,8 +77,8 @@
 
 // DC Motor direction inversion (H-bridge wiring correction)
 // Set to 1 to invert motor direction (swaps forward/reverse)
-#define DC_MOTOR_1_DIR_INVERTED 0      // 0=normal, 1=inverted
-#define DC_MOTOR_2_DIR_INVERTED 1       // 0=normal, 1=inverted
+#define DC_MOTOR_1_DIR_INVERTED 1      // 0=normal, 1=inverted
+#define DC_MOTOR_2_DIR_INVERTED 0       // 0=normal, 1=inverted
 #define DC_MOTOR_3_DIR_INVERTED 0       // 0=normal, 1=inverted
 #define DC_MOTOR_4_DIR_INVERTED 0       // 0=normal, 1=inverted
 
@@ -112,8 +112,8 @@
 
 // Encoder direction inversion (polarity correction)
 // Set to 1 to invert encoder count direction (flips positive/negative)
-#define ENCODER_1_DIR_INVERTED  1       // 0=normal, 1=inverted
-#define ENCODER_2_DIR_INVERTED  0       // 0=normal, 1=inverted
+#define ENCODER_1_DIR_INVERTED  0       // 0=normal, 1=inverted
+#define ENCODER_2_DIR_INVERTED  1       // 0=normal, 1=inverted
 #define ENCODER_3_DIR_INVERTED  0       // 0=normal, 1=inverted
 #define ENCODER_4_DIR_INVERTED  0       // 0=normal, 1=inverted
 
@@ -133,12 +133,12 @@
 // DC motor index that drives the left drive wheel (0-based, 0–3)
 // Positive encoder ticks must mean "wheel moving forward".
 // If the count direction is wrong, set ENCODER_N_DIR_INVERTED in config.h.
-#define ODOM_LEFT_MOTOR     0 // MOTOR_1
-#define ODOM_LEFT_MOTOR_DIR_INVERTED 0
+#define ODOM_LEFT_MOTOR     1 // MOTOR_2
+#define ODOM_LEFT_MOTOR_DIR_INVERTED 1
 
 // DC motor index that drives the right drive wheel (0-based, 0–3)
-#define ODOM_RIGHT_MOTOR    1 // MOTOR_2
-#define ODOM_RIGHT_MOTOR_DIR_INVERTED 1
+#define ODOM_RIGHT_MOTOR    0 // MOTOR_1
+#define ODOM_RIGHT_MOTOR_DIR_INVERTED 0
 
 // ============================================================================
 // TIMING CONFIGURATION

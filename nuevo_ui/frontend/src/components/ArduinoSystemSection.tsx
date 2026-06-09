@@ -31,6 +31,7 @@ export function ArduinoSystemSection() {
   const firmwareState = system?.state ?? -1;
   const isRunning     = firmwareState === 2;
   const isErrorOrStop = firmwareState === 3 || firmwareState === 4;
+  const controlsAvailable = serialConnected || system !== null;
   const hasError      = (system?.errorFlags ?? 0) !== 0 || isErrorOrStop;
   const hasWarning    = !hasError && (system?.warningFlags ?? 0) !== 0;
 
@@ -74,7 +75,7 @@ export function ArduinoSystemSection() {
         {/* Title row + control buttons */}
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-base font-semibold text-white">Arduino</h3>
-          {serialConnected && (
+          {controlsAvailable && (
             <div className="flex items-center gap-1.5">
               {isErrorOrStop ? (
                 <button

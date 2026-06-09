@@ -116,8 +116,9 @@ WAYPOINTS = densify_polyline(PATH_CONTROL_POINTS, spacing=WAYPOINT_SPACING_MM)
 # Split the mission so only Straight 3 uses LiDAR/APF. All other sections are
 # pure pursuit using the current navigation pose, which means odom/GPS fusion
 # can influence pose but LiDAR cannot steer those sections.
-PURE_PURSUIT_SEGMENT_1_POINTS = PATH_CONTROL_POINTS[:14]
+PURE_PURSUIT_SEGMENT_1_POINTS = PATH_CONTROL_POINTS[:13]
 APF_STRAIGHT_3_POINTS = [
+    (tile * 2, tile * 1),
     (tile * 2, tile * 2),
     (tile * 2, tile * 3),
     (tile * 2, tile * 4),
@@ -152,7 +153,7 @@ ACTIVE_SEGMENT_USES_APF = False
 # avoidance direction and oscillate left/right at the turn.
 APF_OBSTACLE_LANE_X_MIN_MM = tile * 1.5
 APF_OBSTACLE_LANE_X_MAX_MM = tile * 2.5
-APF_OBSTACLE_LANE_Y_MIN_MM = tile * 2.0
+APF_OBSTACLE_LANE_Y_MIN_MM = tile * 1.0
 APF_OBSTACLE_LANE_Y_MAX_MM = tile * 6.0
 
 # Stop-sign detections are only mission-ending near the finish lane. This

@@ -1,5 +1,5 @@
 """
-motor2_diag.py — Motor 2 (left wheel) oscillation diagnostic.
+motor2_diag.py — Motor 2 (right wheel) oscillation diagnostic.
 
 Swap this in as main.py to run:
     cp motor2_diag.py main.py
@@ -33,8 +33,8 @@ from robot.hardware_map import (
 from robot.robot import FirmwareState, Robot
 
 # ── Which motor to test ────────────────────────────────────────────────────────
-TEST_MOTOR   = Motor.DC_M2      # left wheel — the one that jitters
-REF_MOTOR    = Motor.DC_M1      # right wheel — reference
+TEST_MOTOR   = Motor.DC_M2      # right wheel — the one that jitters
+REF_MOTOR    = Motor.DC_M1      # left wheel — reference
 
 # ── Test parameters ────────────────────────────────────────────────────────────
 PWM_LEVEL          = 80         # raw PWM during bypass test (0-255)
@@ -152,8 +152,8 @@ def run(robot: Robot) -> None:
             pid_m1 = robot.get_pid(REF_MOTOR,  DCPidLoop.VELOCITY)
             pid_m2 = robot.get_pid(TEST_MOTOR, DCPidLoop.VELOCITY)
             if pid_m1 is not None and pid_m2 is not None:
-                _print_pid(f"Motor {REF_MOTOR}  (right / reference)", pid_m1)
-                _print_pid(f"Motor {TEST_MOTOR} (left  / UNDER TEST )", pid_m2)
+                _print_pid(f"Motor {REF_MOTOR}  (left  / reference)", pid_m1)
+                _print_pid(f"Motor {TEST_MOTOR} (right / UNDER TEST )", pid_m2)
                 if pid_m1 is not None and pid_m2 is not None:
                     if pid_m2.kp > pid_m1.kp * 1.2:
                         print(f"\n  [!] M2 Kp ({pid_m2.kp:.4f}) is significantly higher than"
