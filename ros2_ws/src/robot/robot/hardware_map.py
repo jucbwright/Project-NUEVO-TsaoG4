@@ -24,7 +24,7 @@ class Motor(IntEnum):
 # self-filtering, and GPS tag mounting geometry.
 POSITION_UNIT = Unit.MM
 WHEEL_DIAMETER = 152.0
-WHEEL_BASE = 406.0
+WHEEL_BASE = 335.0
 INITIAL_THETA_DEG = 90.0
 
 # Drive base wiring: M1 is the left wheel and M2 is the right wheel.
