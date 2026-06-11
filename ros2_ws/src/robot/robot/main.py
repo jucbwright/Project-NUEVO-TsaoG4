@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import time
+
+from robot.hardware_map import Button
 from robot.maindrive_start_stop import run as run_drive
+from robot.JuliaFiles.Transition import run as run_transition
 from robot.JuliaFiles.ZombieSweep import run as run_sweep
 from robot.robot import Robot
 
@@ -20,4 +24,20 @@ tail -f ros2_ws/runtime_output/robot_node.log --> Watch the robot node log witho
 """
 
 def run(robot: Robot) -> None:
+    # ------------------------------------------------------------------
+    # DEBUG FAILSAFE: uncomment to skip run_drive() entirely and instead
+    # wait for BTN_1 to manually kick off Transition -> ZombieSweep.
+    # Use this while maindrive's stop-sign handoff isn't reliable yet.
+    # Comment this block back out once maindrive's handoff is verified.
+    # ------------------------------------------------------------------
+    print("[DEBUG] skipping maindrive -- press BTN_1 to start Transition")
+    while not robot.was_button_pressed(Button.BTN_1):
+        time.sleep(0.05)
+    run_transition(robot)
+    run_sweep(robot)
+    return
+    # ------------------------------------------------------------------
+
+    run_drive(robot)
+    run_transition(robot)
     run_sweep(robot)
