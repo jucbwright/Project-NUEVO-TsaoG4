@@ -29,7 +29,7 @@ INITIAL_THETA_DEG = 90.0
 
 # Drive base wiring: M1 is the left wheel and M2 is the right wheel.
 LEFT_WHEEL_MOTOR = Motor.DC_M1
-LEFT_WHEEL_DIR_INVERTED = True
+LEFT_WHEEL_DIR_INVERTED = False
 RIGHT_WHEEL_MOTOR = Motor.DC_M2
 RIGHT_WHEEL_DIR_INVERTED = False
 

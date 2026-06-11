@@ -21,12 +21,8 @@ services:
     image: ros2-runtime:latest
 
     # Entrypoint builds/sources the workspace, then this launch file becomes
-    # the container's main process. If it exits, Docker restarts it.
-    # Includes everything bridge.launch.py did (bridge, sensors, rplidar,
-    # robot mission node) plus the vision node.
-    # To revert to the old behavior, change this back to:
-    #   command: ["ros2", "launch", "bridge", "bridge.launch.py"]
-    command: ["ros2", "launch", "robot", "full_mission.launch.py"]
+    # the container's main process. If the bridge exits, Docker restarts it.
+    command: ["ros2", "launch", "bridge", "bridge.launch.py"]
 
     # ROS2 DDS (Fast-DDS / Cyclone) uses UDP multicast — requires host networking.
     network_mode: host
