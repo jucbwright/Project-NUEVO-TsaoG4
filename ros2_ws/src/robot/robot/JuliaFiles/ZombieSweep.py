@@ -10,9 +10,15 @@ HOW TO RUN
 ----------
 Copy this file over main.py, then restart the robot node:
 
-    cp JuliaFiles/STEPmanipulation_JW.py main.py
-    ros2 run robot robot
+    cp /home/projectroger/Project-NUEVO-TsaoG4/ros2_ws/src/robot/robot/JuliaFiles/ZombieSweep.py /home/projectroger/Project-NUEVO-TsaoG4/ros2_ws/src/robot/robot/main.py
+    
+    ./ros2_ws/docker/restart.sh
 
+    ./ros2_ws/docker/enter_ros2.sh
+    
+     ros2 run robot robot
+    
+    ros2 launch vision vision_debug.launch.py
 WHAT THE ROBOT DOES
 -------------------
 On startup: both steppers are enabled and current position is treated as (0, 0).
@@ -42,7 +48,6 @@ from robot.hardware_map import (
     POSITION_UNIT,
     StepMoveType,
     Stepper,
-    StepperMotionState,
 )
 from robot.robot import FirmwareState, Robot
 from robot.util import TaskHandle, run_task
@@ -63,6 +68,9 @@ TILT_ACCEL   = 150
 
 AIM_TIMEOUT_S = 10.0   # max seconds per stepper move
 DWELL_S       = 3.0    # seconds to hold each position before moving to the next
+STARTUP_RETRIES = 3
+STARTUP_SETTLE_S = 0.2
+STEPPER_ENABLE_SETTLE_S = 0.2
 
 # ---------------------------------------------------------------------------
 # Vision / zombie detection  (same values as zombieTracker.py)
@@ -76,32 +84,14 @@ DWELL_POLL_S     = 0.2   # how often to re-check for zombie during the dwell
 ALL_LEDS = (LED.RED, LED.GREEN, LED.BLUE, LED.ORANGE, LED.PURPLE)
 
 # ---------------------------------------------------------------------------
-# Centering (same approach/values as zombieTracker.py)
-# ---------------------------------------------------------------------------
-
-DEADZONE_PX = 30   # pixels either side of frame centre — no correction AND "centred" threshold
-
-PAN_STEPS_PER_PIXEL    = 0.15
-PAN_MAX_STEPS_PER_MOVE = 15
-PAN_COOLDOWN_SEC       = 0.6
-PAN_MIN = -500
-PAN_MAX =  500
-
-TILT_STEPS_PER_PIXEL    = 0.50
-TILT_MAX_STEPS_PER_MOVE = 5
-TILT_COOLDOWN_SEC       = 1.50
-TILT_MIN = -100
-TILT_MAX =  100
-
-CENTER_STILL_SEC = 1.0   # seconds the chosen zombie must stay within the deadzone before "centred"
-
-
-# ---------------------------------------------------------------------------
 # Grid positions (steps from startup origin) -- tune to match your build
 # ---------------------------------------------------------------------------
 
-PAN_L, PAN_C, PAN_R    = -200,   0,  200   # pan columns: left / center / right
-TILT_U, TILT_C, TILT_D =  50,   0, -50  # tilt rows:   up   / center / down
+GRID_STEP = 100
+PAN_C = 0
+TILT_C = 0
+PAN_L, PAN_R = PAN_C - GRID_STEP, PAN_C + GRID_STEP
+TILT_D, TILT_U = TILT_C - GRID_STEP, TILT_C + GRID_STEP
 
 
 # ---------------------------------------------------------------------------
@@ -143,42 +133,42 @@ def configure_robot(robot: Robot) -> None:
     robot.enable_vision()
 
 
-def _select_target_zombie(robot: Robot, frame_w: int, frame_h: int) -> dict | None:
-    """Among all zombie detections, return the one nearest to the target
-    coordinate (the frame centre, i.e. where this grid position is aimed),
-    or None if no zombie is detected."""
+def start_robot(robot: Robot) -> bool:
+    current = robot.get_state()
+    if current in (FirmwareState.ESTOP, FirmwareState.ERROR):
+        if not robot.reset_estop():
+            print("[error] could not reset ESTOP/ERROR state")
+            return False
+        time.sleep(STARTUP_SETTLE_S)
+
+    for attempt in range(1, STARTUP_RETRIES + 1):
+        if robot.set_state(FirmwareState.RUNNING, timeout=2.0):
+            time.sleep(STARTUP_SETTLE_S)
+            if robot.get_state() == FirmwareState.RUNNING:
+                return True
+            print("[warn] RUNNING command accepted, waiting for state telemetry")
+        else:
+            print(f"[warn] RUNNING state request failed ({attempt}/{STARTUP_RETRIES})")
+        time.sleep(STARTUP_SETTLE_S)
+
+    print("[error] Arduino stayed IDLE; sweep startup aborted")
+    return False
+
+
+def _find_zombie(robot: Robot) -> dict | None:
+    """Return the highest-confidence zombie detection, or None."""
     if not robot.is_vision_active(timeout_s=VISION_STALE_SEC):
         return None
-    target_x, target_y = frame_w / 2.0, frame_h / 2.0
-    best, best_dist = None, float("inf")
+
+    best, best_conf = None, -1.0
     for det in robot.get_detections("zombie"):
-        if float(det["confidence"]) < MIN_CONFIDENCE:
+        conf = float(det["confidence"])
+        if conf < MIN_CONFIDENCE:
             continue
-        bbox = det["bbox"]
-        cx = bbox["x"] + bbox["width"] / 2.0
-        cy = bbox["y"] + bbox["height"] / 2.0
-        dist = (cx - target_x) ** 2 + (cy - target_y) ** 2
-        if dist < best_dist:
-            best_dist = dist
+        if conf > best_conf:
+            best_conf = conf
             best = det
     return best
-
-
-def _stepper_is_idle(robot: Robot, stepper: Stepper) -> bool:
-    """Return True when the stepper is not actively moving.
-    Only ACCEL/CRUISE/DECEL block a new command; IDLE, FAULT, and unknown
-    states are treated as safe-to-command so a stale firmware state never
-    silently freezes the centering correction.
-    """
-    step_state = robot.get_step_state()
-    if step_state is None:
-        return True
-    motion = step_state.steppers[int(stepper) - 1].motion_state
-    return motion not in (
-        int(StepperMotionState.ACCEL),
-        int(StepperMotionState.CRUISE),
-        int(StepperMotionState.DECEL),
-    )
 
 
 def _dim_all_leds(robot: Robot) -> None:
@@ -213,14 +203,14 @@ def run(robot: Robot) -> None:
     while True:
 
         if state == "INIT":
-            current = robot.get_state()
-            if current in (FirmwareState.ESTOP, FirmwareState.ERROR):
-                robot.reset_estop()
-            robot.set_state(FirmwareState.RUNNING)
+            if not start_robot(robot):
+                time.sleep(1.0)
+                continue
             robot.step_set_config(PAN_STEPPER,  max_velocity=PAN_MAX_VEL,  acceleration=PAN_ACCEL)
             robot.step_set_config(TILT_STEPPER, max_velocity=TILT_MAX_VEL, acceleration=TILT_ACCEL)
             robot.step_enable(PAN_STEPPER)
             robot.step_enable(TILT_STEPPER)
+            time.sleep(STEPPER_ENABLE_SETTLE_S)
             pos["pan"] = pos["tilt"] = 0
             show_idle_leds(robot)
             print("[FSM] IDLE -- press BTN_1 to run the aim sequence")
@@ -260,76 +250,20 @@ def run(robot: Robot) -> None:
                         print(f"[AIM] aimed at {target.label} — holding {DWELL_S}s")
                         dwell_end = time.monotonic() + DWELL_S
                         zombie_found = False
-                        still_since: float | None = None
-                        pan_next_allowed = 0.0
-                        tilt_next_allowed = 0.0
                         while time.monotonic() < dwell_end:
                             if task.cancelled():
                                 return
-                            now = time.monotonic()
-                            frame_w, frame_h = robot.get_detection_image_size()
-                            zombie = _select_target_zombie(robot, frame_w, frame_h)
+                            zombie = _find_zombie(robot)
 
                             if zombie is None:
-                                still_since = None
                                 _dim_all_leds(robot)
                                 robot.set_led(LED.ORANGE, 200)
-                                time.sleep(DWELL_POLL_S)
-                                continue
-
-                            bbox = zombie["bbox"]
-                            zombie_cx = bbox["x"] + bbox["width"] / 2.0
-                            zombie_cy = bbox["y"] + bbox["height"] / 2.0
-                            pan_error  = zombie_cx - frame_w / 2.0 if frame_w > 0 else 0.0
-                            tilt_error = zombie_cy - frame_h / 2.0 if frame_h > 0 else 0.0
-                            centered = abs(pan_error) <= DEADZONE_PX and abs(tilt_error) <= DEADZONE_PX
-
-                            if centered:
-                                if still_since is None:
-                                    still_since = now
-                                if not zombie_found and (now - still_since) >= CENTER_STILL_SEC:
-                                    zombie_found = True
-                                    print(f"[ZOMBIE] Centered at {target.label}! Holding 2s for shot...")
-                                    for led in ALL_LEDS:
-                                        robot.set_led(led, LED_BRIGHTNESS)
                             else:
-                                still_since = None
-
-                            if not zombie_found:
-                                robot.set_led(LED.GREEN, LED_BRIGHTNESS)
-                                robot.set_led(LED.ORANGE, 0)
-
-                                # --- Pan correction (horizontal) ---
-                                if (frame_w > 0 and now >= pan_next_allowed
-                                        and _stepper_is_idle(robot, PAN_STEPPER)
-                                        and abs(pan_error) > DEADZONE_PX):
-                                    steps = int(
-                                        max(-PAN_MAX_STEPS_PER_MOVE,
-                                            min(PAN_MAX_STEPS_PER_MOVE, -pan_error * PAN_STEPS_PER_PIXEL))
-                                    )
-                                    new_pos = max(PAN_MIN, min(PAN_MAX, pos["pan"] + steps))
-                                    steps   = new_pos - pos["pan"]
-                                    if steps != 0:
-                                        robot.step_move(PAN_STEPPER, steps=steps,
-                                                        move_type=StepMoveType.RELATIVE, blocking=False)
-                                        pos["pan"] = new_pos
-                                        pan_next_allowed = now + PAN_COOLDOWN_SEC
-
-                                # --- Tilt correction (vertical) ---
-                                if (frame_h > 0 and now >= tilt_next_allowed
-                                        and _stepper_is_idle(robot, TILT_STEPPER)
-                                        and abs(tilt_error) > DEADZONE_PX):
-                                    steps = int(
-                                        max(-TILT_MAX_STEPS_PER_MOVE,
-                                            min(TILT_MAX_STEPS_PER_MOVE, -tilt_error * TILT_STEPS_PER_PIXEL))
-                                    )
-                                    new_pos = max(TILT_MIN, min(TILT_MAX, pos["tilt"] + steps))
-                                    steps   = new_pos - pos["tilt"]
-                                    if steps != 0:
-                                        robot.step_move(TILT_STEPPER, steps=steps,
-                                                        move_type=StepMoveType.RELATIVE, blocking=False)
-                                        pos["tilt"] = new_pos
-                                        tilt_next_allowed = now + TILT_COOLDOWN_SEC
+                                if not zombie_found:
+                                    zombie_found = True
+                                    print(f"[ZOMBIE] Detected at {target.label}; holding for shot")
+                                for led in ALL_LEDS:
+                                    robot.set_led(led, LED_BRIGHTNESS)
 
                             time.sleep(DWELL_POLL_S)
 

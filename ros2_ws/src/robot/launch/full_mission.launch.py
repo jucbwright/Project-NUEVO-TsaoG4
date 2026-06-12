@@ -33,29 +33,30 @@ def generate_launch_description():
         ),
 
         # GPS / ArUco tag sensor — position fusion (maindrive_start_stop)
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                PathJoinSubstitution(
-                    [FindPackageShare("sensors"), "launch", "sensors.launch.py"]
-                )
-            ),
-        ),
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(
+        #         PathJoinSubstitution(
+        #             [FindPackageShare("sensors"), "launch", "sensors.launch.py"]
+        #         )
+        #     ),
+        # ),
 
         # Vision node (debug) — traffic light, stop sign, zombie detection
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                PathJoinSubstitution(
-                    [FindPackageShare("vision"), "launch", "vision_debug.launch.py"]
-                )
-            ),
-        ),
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(
+        #         PathJoinSubstitution(
+        #             [FindPackageShare("vision"), "launch", "vision_debug.launch.py"]
+        #         )
+        #     ),
+        # ),
 
         # Robot mission node — runs main.py (drive phase → zombie sweep)
-        Node(
-            package="robot",
-            executable="robot",
-            name="robot",
-            output="screen",
-        ),
+        # Node(
+        #     package="robot",
+        #     executable="robot",
+        #     name="robot",
+        #     output="screen",
+        # ),
+        
 
     ])
